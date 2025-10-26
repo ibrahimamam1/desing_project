@@ -2,7 +2,7 @@ import traci
 import sumolib
 import sys
 import os
-import csv  # <-- added for CSV saving
+
 
 SUMO_BINARY = "sumo-gui"
 SUMO_CONFIG = "Sample.sumocfg" 
@@ -79,4 +79,3 @@ if __name__ == "__main__":
     data = run_sumo()
     analyze_travel_times(data)
 
-# Test Comment .
