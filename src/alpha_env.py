@@ -148,107 +148,33 @@ class AlphaEnv(Env_N):
         RED = '\033[91m'
         CYAN = '\033[96m'
         RESET = '\033[0m'
-        self.step_counter_within_rl_step=0
+        self.step_counter_within_rl_step = 0
         for inner_step in range(self.env_params.sims_per_step):
             self.time_counter += self.sim_step
             self.step_counter += 1
             self.step_counter_within_rl_step = inner_step
             # input("PRESS")
             print(f"\n{CYAN}@ Simulation Time:{self.time_counter}s #Inner-Step Count within RL-iteration:{inner_step}{RESET}")
-
-            ##### perform lane change actions for Controlled Human-Driven Vehicles
-            if len(self.k.vehicle.get_controlled_lc_ids()) > 0:
-                direction = []
-                for veh_id in self.k.vehicle.get_controlled_lc_ids():
-                    target_lane = self.k.vehicle.get_lane_changing_controller(
-                        veh_id).get_action(self)
-                    direction.append(target_lane)
-                self.k.vehicle.apply_lane_change(
-                    self.k.vehicle.get_controlled_lc_ids(),
-                    direction=direction)
-
-            # perform (optionally) routing actions for all vehicles in the
-            # network, including RL and SUMO-controlled vehicles
-            routing_ids = []
-            routing_actions = []
-            for veh_id in self.k.vehicle.get_ids():
-                if self.k.vehicle.get_routing_controller(veh_id) \
-                        is not None:
-                    routing_ids.append(veh_id)
-                    route_contr = self.k.vehicle.get_routing_controller(
-                        veh_id)
-                    routing_actions.append(route_contr.choose_route(self))
-
-            self.k.vehicle.choose_routes(routing_ids, routing_actions)
-            #### Before Applying Acceleration #########
-            ## Added by Ashraf: Starts
-            # for veh_id in self.k.vehicle.get_rl_ids():
-            #     speed=self.k.vehicle.get_speed(veh_id)
-            #     print(f"\t#veh_id:{veh_id} speed:{speed} Before applying acceleration at {self.step_counter}")
-            ## Added by Ashraf: Ends
-
-            ###@@@###
+            
+            # apply rl actions
             self.apply_rl_actions(rl_actions)
-            ###@@@###
-            # if self.step_counter>20:
-            #     self.check_about_to_enter_junction_functionality()
-
             self.additional_command()
-
-            # ## Added by Ashraf: Starts
-            # ###@@@###
-            # # @ Need to STORE new observations related to Vehicle and Junction Object
-            # previous_grid_observation_data, previous_lane_observation_data = self.k.junction.save_observation_data()
-            # self.k.junction.initialize_all_observation_data()
-            # self.update_coordiantion_data_functionality()
-            # ###@@@###
-            # ## Added by Ashraf: Ends
 
             # advance the simulation in the simulator by one step
             self.k.simulation.simulation_step()
 
-            # store new observations in the vehicles and traffic lights class
-            ###@@@###
-            # #@ Need to STORE new observations related to Vehicle and Junction Object
-            # self.k.juction.initialize_all_observation_data()
-            # time.sleep(0.05)  # sleep 50 ms
             self.k.update(reset=False)
-            ###@@@###
-
-            # update the colors of vehicles
-            if self.sim_params.render:
-                self.k.vehicle.update_vehicle_colors()
-
-            # ## Added by Ashraf: Starts
-            # ###@@@###
-            # #@ Need to STORE new observations related to Vehicle and Junction Object
-            # previous_grid_observation_data,previous_lane_observation_data=self.k.junction.save_observation_data()
-            # self.k.junction.initialize_all_observation_data()
-            # self.update_coordiantion_data_functionality()
-            # ###@@@###
-            # ## Added by Ashraf: Ends
-
-            # crash encodes whether the simulator experienced a collision
-            ## Added by Ashraf: Starts
-            # crash = self.k.simulation.check_collision() # Commented by Ashraf
+            
+            # check if collision occured
             crash = False
             if self.k.kernel_api.simulation.getCollidingVehiclesNumber():
                 crash = True
-            ## Added by Ashraf: Ends
-            # stop collecting new simulation steps if there is a collision
-            # if crash:
-            #     colliding_vehicles_number = self.k.kernel_api.simulation.getCollidingVehiclesNumber()
-            #     colliding_vehicles_id_list = self.k.kernel_api.simulation.getCollidingVehiclesIDList()
-            #     starting_teleport_id_list = self.k.kernel_api.simulation.getStartingTeleportIDList()
-            #     print(f"\n !!!! Colliding Vehicles Count:{colliding_vehicles_number} IDs:{colliding_vehicles_id_list}:\n\t Starting Teleport IDs:{starting_teleport_id_list}")
             if crash:
                 colliding_vehicles_number = self.k.kernel_api.simulation.getCollidingVehiclesNumber()
                 colliding_vehicles_id_list = self.k.kernel_api.simulation.getCollidingVehiclesIDList()
 
                 # Get unique vehicle IDs
                 unique_colliding_vehicles = set(colliding_vehicles_id_list)
-                # starting_teleport_id_list = self.k.kernel_api.simulation.getStartingTeleportIDList()
-                # Dictionary to store speed modes for each unique vehicle
                 colliding_vehicle_speed_modes = {}
 
                 for colliding_veh_id in unique_colliding_vehicles:
@@ -256,7 +182,7 @@ class AlphaEnv(Env_N):
                         colliding_veh_speed_mode = self.k.kernel_api.vehicle.getSpeedMode(colliding_veh_id)
                         colliding_vehicle_speed_modes[colliding_veh_id] = colliding_veh_speed_mode
                     except Exception as e:
-                        print(f"Could not get speed mode for vehicle {veh_id}: {e}")
+                        print(f"Could not get speed mode for vehicle {colliding_veh_id}: {e}")
                         colliding_vehicle_speed_modes[colliding_veh_id] = None  # or some default value
 
                 print(
@@ -272,29 +198,20 @@ class AlphaEnv(Env_N):
 
             # render a frame
             self.render()
-
-            ## All Tranning Related Tasks at this particular Simulation Step is Done #######
-            # for veh_id in self.k.vehicle.get_rl_ids():
-            #     speed = self.k.vehicle.get_speed(veh_id)
-            #     print(f"\t@veh_id:{veh_id} speed:{speed} AFTER applying acceleration at {self.step_counter}")
-
-        ## A particulat RL Tranning Step Done: ##
+        
+        # get number of agents left in simulation
+        agents_left = len(self.sorted_ids)
+        print(f'Agents left={agents_left}')
 
         states = self.get_state()
         self.state = np.asarray(states).T
 
         # collect observation new state associated with action
         next_observation = np.copy(states)
-
-        goal_reached = False
-        
-        # test if the environment should terminate due to a collision or the
-        # time horizon being met
         done = (self.time_counter >= self.env_params.sims_per_step *
                 (self.env_params.warmup_steps + self.env_params.horizon)
-                or crash or goal_reached)
+                or crash or agents_left == 0)
 
-        # compute the info for each agent
         infos = {}
 
         # compute the reward
@@ -304,13 +221,9 @@ class AlphaEnv(Env_N):
         else:
             reward = self.compute_reward(rl_actions, fail=crash)
         print(f"Step applied. action = {rl_actions}, observation = {next_observation}, reward = {reward}")
-        #====ORIGINAL RETURN 4 TUPLE====
-        #return next_observation, reward, done, infos
-        #====MODIFIED By Ibrahima RETURN 5 TUPLE====
-        truncated = False #TO MODIFY
+        truncated = False  # TO MODIFY
         return next_observation, reward, done, truncated, infos
         
-
 
     def _apply_rl_actions(self, rl_actions):
         """Apply RL actions to the sorted RL vehicles."""
@@ -326,13 +239,12 @@ class AlphaEnv(Env_N):
         print('Applying RL actions to RL vehicles')
         self.k.vehicle.apply_acceleration(sorted_rl_ids, rl_actions)
 
-
     def compute_reward(self, rl_actions, **kwargs):
         """See class definition"""
-        reward = -0.1 #teme step penalty
+        reward = -0.1  # time step penalty
         
         if self.k.kernel_api.simulation.getCollidingVehiclesNumber():
-            #collision penalty
+            # collision penalty
             reward -= 100
 
         return reward
@@ -426,14 +338,13 @@ class AlphaEnv(Env_N):
         ids = self.k.vehicle.get_ids()
             
         if self.env_params.additional_params['sort_vehicles']:
-           return sorted(ids, key=self._get_abs_position)
+            return sorted(ids, key=self._get_abs_position)
         else:
             return self.k.vehicle.get_ids()
 
     def _get_abs_position(self, veh_id):
         """Return the absolute position of a vehicle."""
         return self.absolute_position.get(veh_id, -1001)
-    
     
     def reset(self, *, seed=None, options=None):
         """See parent class.
