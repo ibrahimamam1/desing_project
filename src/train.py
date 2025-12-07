@@ -11,6 +11,9 @@ import glob, time, random
 from flow.controllers import RLController # for RL controlled Vehicles
 from flow.controllers import IDMController # for NON-RL controlled Vehicles
 
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+
 ################ Acceleration Controllers #######################
 IDM_acceleration_controller = IDMController
 RL_vehicle_acceleration_controller = RLController
@@ -214,9 +217,8 @@ initial_config = InitialConfig(
                  additional_params=None
                  )
 
-from flow.envs.multiagent.alpha import AlphaEnv as myEnv
+from src.alpha_env import AlphaEnv as myEnv
 from flow.envs.ring.accel import ADDITIONAL_ENV_PARAMS
-
 #myEnv=AccelEnv
 myTag="1_RL_PPO_AccelEnv_500mLane_12mJunction_RightBeforeLeft_Junction"
 
