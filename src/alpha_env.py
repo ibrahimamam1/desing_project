@@ -156,6 +156,17 @@ class AlphaEnv(Env_N):
             # input("PRESS")
             print(f"\n{CYAN}@ Simulation Time:{self.time_counter}s #Inner-Step Count within RL-iteration:{inner_step}{RESET}")
             
+            #Check if vehicle is in control zone 
+            sorted_ids = self.sorted_ids
+            self.vehicles_to_control = [] 
+            for veh_id in sorted_ids:
+                position = self.k.vehicle.get_2d_position(veh_id) 
+                if(position[0] >= -12 and position[0] <= 12 and position[1]>=-12 and position[1]<=12):
+                    print(f"id={veh_id}, Inside control zone at position = {position}")
+                    self.vehicles_to_control.append(veh_id)
+                    
+
+
             # apply rl actions
             self.apply_rl_actions(rl_actions)
             self.additional_command()
@@ -235,9 +246,16 @@ class AlphaEnv(Env_N):
         if rl_actions is None or len(rl_actions) != len(sorted_rl_ids):
             print(f"⚠️ RL actions mismatch: expected {len(sorted_rl_ids)} actions but got {len(rl_actions) if rl_actions is not None else 'None'}")
             return  # or apply zero acceleration if needed
-
-        print('Applying RL actions to RL vehicles')
-        self.k.vehicle.apply_acceleration(sorted_rl_ids, rl_actions)
+        
+        # Create a mapping from vehicle ID to action
+        id_to_action = {veh_id: action for veh_id, action in zip(sorted_rl_ids, rl_actions)}
+    
+        # Filter actions for only the vehicles we want to control
+        filtered_ids = [veh_id for veh_id in self.vehicles_to_control if veh_id in id_to_action]
+        filtered_actions = [id_to_action[veh_id] for veh_id in filtered_ids]
+    
+        print(f'Applying RL actions to {len(filtered_ids)} RL vehicles')
+        self.k.vehicle.apply_acceleration(filtered_ids, filtered_actions)
 
     def compute_reward(self, rl_actions, **kwargs):
         """See class definition"""

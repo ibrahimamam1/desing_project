@@ -52,6 +52,7 @@ num_non_rl_vehicles= 0
 vehicles = VehicleParams()
 
 RL_car_following_params=SumoCarFollowingParams(
+    speed_mode=32,
     accel=max_accel,
     decel=max_decel,
     sigma=sigma,
