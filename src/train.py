@@ -4,6 +4,7 @@ import sys
 from flow.core.params import VehicleParams
 from flow.core.params import NetParams
 from flow.core.params import InitialConfig
+from flow.core.params import TrafficLightParams
 from flow.core.params import EnvParams
 from flow.core.params import SumoParams,SumoCarFollowingParams
 
@@ -301,38 +302,107 @@ flow_params = dict(
 
 ###############################  Running RL experiments in Ray #####################################
 
-####  Import  ####################
-import json
 import ray
-from ray.tune import run_experiments
 from ray.tune.registry import register_env
-
 from ray.rllib.algorithms.ppo import PPOConfig
-from pprint import pprint
-from flow.utils.registry import make_create_env
-from flow.utils.rllib import FlowParamsEncoder
+import gymnasium as gym
+import numpy as np
+import sys 
+
+sys.path.append(os.path.dirname(__file__))
+from alpha_env import AlphaEnv 
 
 ################################ Initializing Ray ####################
-ray.init(local_mode=True)  # FOR DEBUGGING
+ray.init(local_mode=True, ignore_reinit_error=True)
 
-N_CPUS = 2
-N_ROLLOUTS = 1
+# 1. DEFINE THE ENVIRONMENT FACTORY
+# We cannot use flow.utils.registry.make_create_env because it wraps the env 
+# in a Single-Agent wrapper. We need our raw MultiAgent AlphaEnv.
+def create_flow_env(env_config):
+    params = env_config["flow_params"]
+    network_class = params["network"]
+    initial_config = params.get('initial', InitialConfig())
+    traffic_lights = params.get("tls", TrafficLightParams())
 
-# register the Flow env for this experiment
-create_env, gym_name = make_create_env(params=flow_params, version=0)
+    network = network_class(
+            name='AlphaEnv-exp',
+            vehicles=vehicles,
+            net_params=net_params,
+            initial_config=initial_config,
+            traffic_lights=traffic_lights,
+        )
 
-# Register as rllib env with Gym
-register_env(gym_name, create_env)
+    env = AlphaEnv(
+        env_params=params['env'], 
+        sim_params=params['sim'], 
+        network=network
+    )
+    return env
+
+# Register the custom environment with a unique name
+env_name = "alpha_multiagent_v0"
+register_env(env_name, create_flow_env)
+
+# DEFINE PARAMETER SHARING (PPO CONFIG)
+
+# Define the shapes of observation and action spaces
+# Obs: (1 ego + 5 neighbors) * 5 features = 30
+obs_dim = 30 
+dummy_obs_space = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(obs_dim,), dtype=np.float32)
+
+# Act: 1 value (acceleration)
+dummy_act_space = gym.spaces.Box(low=-4.5, high=10.0, shape=(1,), dtype=np.float32)
+
+# Define the "Shared Policy"
+policies = {
+    "shared_policy": (
+        None,             # Use default PPO Policy class
+        dummy_obs_space,  
+        dummy_act_space,  
+        {}                # Extra config
+    )
+}
+
+# We map ALL agents to the SAME policy (Parameter Sharing)
+def policy_mapping_fn(agent_id, episode, worker, **kwargs):
+    return "shared_policy"
+
+# ==============================================================================
+# 3. CONFIGURE AND TRAIN PPO
+# ==============================================================================
+
+ray.init(local_mode=True, ignore_reinit_error=True)
 
 config = (PPOConfig()
-          .environment(env=gym_name)
+          .environment(
+              env=env_name,
+              # Pass the flow_params dictionary so the factory can use it
+              env_config={"flow_params": flow_params}, 
+              disable_env_checking=True # Disable Gym API checks (critical for Flow)
+          )
+          .framework("torch") 
           .training(
             lr=0.001,
             clip_param=0.2,
+            train_batch_size=4000, 
+            sgd_minibatch_size=128,
+            num_sgd_iter=10
           )
+          .multi_agent(
+              policies=policies,
+              policy_mapping_fn=policy_mapping_fn,
+              policies_to_train=["shared_policy"],
+          )
+          # Set to 0 GPUs and 0 workers for easier debugging/local testing
           .resources(num_gpus=0) 
           .rollouts(num_rollout_workers=0, num_envs_per_worker=1) 
           ) 
 
 algo = config.build()
-algo.train()
+
+print("Starting Training...")
+for i in range(10):
+    result = algo.train()
+    print(f"Iteration: {i}, Mean Reward: {result['episode_reward_mean']}")
+
+algo.stop()
