@@ -1,12 +1,16 @@
 
 #============NEW ACCEL ENV ENVIRONMENT BY IBRAHIMA============
 from flow.core import rewards
-from flow.envs.base_new import Env_N
 
 import gymnasium as gym
 import numpy as np
 import random
+import sys 
+import os 
 
+sys.path.append(os.path.dirname(__file__))
+
+from base_env import Env_N
 class AlphaEnv(Env_N):
     """
     Multi-Agent Alpha environment.
