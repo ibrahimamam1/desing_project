@@ -8,52 +8,41 @@ from flow.core.params import TrafficLightParams
 from flow.core.params import EnvParams
 from flow.core.params import SumoParams,SumoCarFollowingParams
 
-import glob, time, random
 from flow.controllers import RLController # for RL controlled Vehicles
 from flow.controllers import IDMController # for NON-RL controlled Vehicles
 
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+import random 
 
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 ################ Acceleration Controllers #######################
 IDM_acceleration_controller = IDMController
 RL_vehicle_acceleration_controller = RLController
 
-SPEED_MODES = {
-    "disable_right_of_way": 55, #Newly Defined at /flow/core/params.py
-    "all_checks_off": 32,     #Newly Defined at /flow/core/params.py
-    "aggressive": 0,
-    "obey_safe_speed": 1,
-    "no_collide": 7,
-    "right_of_way": 25,
-    "all_checks": 31
-}
-min_gap=0.9 #Default 2.5 #min_gap_to_avoid_collision
-max_accel=2.6 #Default 2.6
-max_decel=4.5 #Default 4.5
-max_speed=30 #Default 30m/s 108km/h
+min_gap=0.9 
+max_accel=2.6 
+max_decel=4.5 
+max_speed=30 
 initial_speed = 0
 speed_factor=1.0
 speed_dev=0.0
-impatience=0.0 #Default 0.5
-car_follow_model="IDM" # Default "IDM"
-sigma=0 #Default 0.5
-tau=0.8 # past 1 at sim_step=0.1 you no longer see waves
+impatience=0.0 
+car_follow_model="IDM" 
+sigma=0 
+tau=0.8
 
-##### Car Following Params Configuration  #####
+######### Car Following Params Configuration  #######
 
-#number of Vehicles at the begining of Simulation
 max_vehicle_count_in_inflow = 4
 num_inflows_vehicles= random.randint(1, max_vehicle_count_in_inflow) #1
 num_rl_vehicles= 2
 num_non_rl_vehicles= 0
 
-
-
 vehicles = VehicleParams()
 
+rl_speed_mode = 32 #32 = safety check of, 31 = safety check on
 RL_car_following_params=SumoCarFollowingParams(
-    speed_mode=32,
+    speed_mode=rl_speed_mode,
     accel=max_accel,
     decel=max_decel,
     sigma=sigma,
@@ -69,8 +58,6 @@ RL_car_following_params=SumoCarFollowingParams(
 vehicles.add(
      veh_id="RL",
      acceleration_controller=(RL_vehicle_acceleration_controller, {}),
-     #lane_change_controller=(SimLaneChangeController, {}),
-     #routing_controller=(ContinuousRouter, {}),
      initial_speed=initial_speed,
      num_vehicles=num_rl_vehicles,
      car_following_params=RL_car_following_params,
@@ -78,7 +65,9 @@ vehicles.add(
      color="blue"
      )
 
+non_rl_speed_mode = 31 #32 = safety check of, 31 = safety check on
 NonRL_car_following_params=SumoCarFollowingParams(
+    speed_mode = non_rl_speed_mode,
     accel=max_accel,
     decel=max_decel,
     sigma=sigma,
@@ -94,8 +83,6 @@ NonRL_car_following_params=SumoCarFollowingParams(
 vehicles.add(
      veh_id="NonRL",
      acceleration_controller=(IDM_acceleration_controller, {}),#v0=30), #{}),
-     #lane_change_controller=(SimLaneChangeController, {}),
-     #routing_controller=(ContinuousRouter, {}),
      initial_speed=initial_speed,
      num_vehicles=num_non_rl_vehicles,
      car_following_params=NonRL_car_following_params,
@@ -106,22 +93,9 @@ vehicles.add(
 ############################# InFlow  Configuration  #########################
 from flow.core.params import InFlows
 inflow = InFlows()
-############################# Probability Distribution Parameter ##########
-####### Discrete Integer probability steps (e.g., multiples of 1)
-# pick randomly from a set of values between 1 and 6
-probability_discrete_int = random.choice([i for i in range(1, 7)])
 
-####### Discrete probability steps (e.g., multiples of 0.01)
-# pick randomly from a set of values between 0.01 and 0.10
+random_begin_time = random.choice([i for i in range(1, 7)])
 probability_discrete = random.choice([i/100 for i in range(1, 11)])
-
-####### Normal (Gaussian) variations
-value = random.gauss(0.05, 0.02)   # mean=0.05, std=0.02
-probability_gaussian = max(0.01, min(0.10, value))  # clamp to [0.01, 0.10]
-
-###### Uniform Distributions
-# probability between 0.01 and 0.10 (inclusive of bounds)
-probability_uniform = random.uniform(0.01, 0.10)
 
 inflow.add(veh_type="NonRL",
            edge="E#T-X",
@@ -131,7 +105,7 @@ inflow.add(veh_type="NonRL",
            # probability= 0.0001,#probability_discrete,
            depart_lane=0,  # right lane
            depart_speed= initial_speed, #initial_speed, #"max","random"
-           begin=probability_discrete_int,  # rand[1,6] unit in minute
+           begin=random_begin_time,  # rand[1,6] unit in minute
            number=num_inflows_vehicles,
            # number=7,
            color="green"
@@ -145,7 +119,7 @@ inflow.add(veh_type="NonRL",
            probability= probability_discrete,
            depart_lane=0,  # right lane
            depart_speed= initial_speed, #initial_speed, #"max","random"
-           begin=probability_discrete_int,  # rand[1,6] unit in minute
+           begin=random_begin_time,  # rand[1,6] unit in minute
            number=num_inflows_vehicles,
            color="green"
            )
@@ -159,7 +133,7 @@ inflow.add(veh_type="NonRL",
            # probability= 0.0001,#probability_discrete,
            depart_lane=0,  # right lane
            depart_speed= initial_speed, #initial_speed, #"max","random"
-           begin=probability_discrete_int,  # rand[1,6] unit in minute
+           begin=random_begin_time,  # rand[1,6] unit in minute
            number=num_inflows_vehicles,
            color="green"
            )
@@ -172,9 +146,8 @@ inflow.add(veh_type="NonRL",
            # probability= probability_discrete,
            depart_lane=0,  # right lane
            depart_speed= initial_speed, #initial_speed, #"max","random"
-           begin=probability_discrete_int,  # rand[1,6] unit in minute
+           begin=random_begin_time,  # rand[1,6] unit in minute
            number=num_inflows_vehicles,
-           # number=2,
            color="green"
            )
 
@@ -204,9 +177,6 @@ EDGES_DISTRIBUTION = [
     "E#T-X",
 ]
 
-# Shuffle edge distibuton to randomize which edge is first
-random.shuffle(EDGES_DISTRIBUTION)
-
 initial_config = InitialConfig(
                  shuffle=False,
                  spacing="random", #"random",#"uniform",
@@ -222,18 +192,14 @@ initial_config = InitialConfig(
 from src.alpha_env import AlphaEnv as myEnv
 from flow.envs.ring.accel import ADDITIONAL_ENV_PARAMS
 #myEnv=AccelEnv
-myTag="1_RL_PPO_AccelEnv_500mLane_12mJunction_RightBeforeLeft_Junction"
+myTag="Alpha Experiment"
 
 ############################## Environemnt Configuration  ###############################
-#number of time steps
 horizon=260
-
-#simimualtion step length
 sim_step=0.5
-
 number_of_sim_steps_per_RlAction_step=1
+
 env_params = EnvParams(
-             # additional_params=ADDITIONAL_ENV_PARAMS,
              additional_params={
                  'max_accel': max_accel,
                  'max_decel': max_decel,
@@ -249,29 +215,20 @@ env_params = EnvParams(
 ############################## Sumo Params Configuration  ###############################
 teleport_time = 0
 sim_params = SumoParams(
-                 port=None, #Port for Traci to connect to; finds an empty port by default
-                 ###############
+                 port=None,
                  sim_step=sim_step,
-                 ##############
                  emission_path=output_file_dir,
-                 #############
                  lateral_resolution=None,
-                 no_step_log=True,#False,
-                 ###########
-                 # render=False + save_render=True + restart_instance=True : Simulation Tested & Render Tested okey
-                 # render=True/"drgb" + save_render=False/True(*warning) + restart_instance=True : Simulation Tested & Render Tested okey
-                 render= True, #True, #"drgb" is tested and it works fine with render true #specifies whether to save rendering data to disk
-                 #######SET -'True' while Render False.... :'False' while Render True ############
+                 no_step_log=True,
+                 render= True,
                  save_render=False,
-                 ###################
-                 sight_radius=25, #sets the radius of observation for RL vehicles (meter)
-                 show_radius=False, #specifies whether to render the radius of RL observation
+                 sight_radius=25, 
+                 show_radius=False, 
                  pxpm=2, #specifies rendering resolution (pixel / meter)
-                 force_color_update=False, #whether or not to automatically color vehicles according to their typ
-                 overtake_right=False, #whether vehicles are allowed to overtake on the right as well as the left
-                 seed=None, #seed for sumo instance
+                 force_color_update=False, 
+                 overtake_right=False, 
+                 seed=42,
 
-                 ##################Important: restart_instance=True (for all case) (specially for RL and Render False)######
                  restart_instance=True,
                  #specifies whether to restart a sumo instance upon reset. Restarting
                  #the instance helps avoid slowdowns cause by excessive inflows over
@@ -280,8 +237,6 @@ sim_params = SumoParams(
 
                  print_warnings=True,
                  teleport_time=teleport_time,
-                 #If negative, vehicles don't teleport in gridlock. If positive,
-                 #they teleport after teleport_time seconds
 
                  num_clients=1, #Number of clients that will connect to Traci
                  color_by_speed=False, #whether to color the vehicles by the speed they are moving at the current time step
@@ -315,31 +270,41 @@ from alpha_env import AlphaEnv
 ################################ Initializing Ray ####################
 ray.init(local_mode=True, ignore_reinit_error=True)
 
-# 1. DEFINE THE ENVIRONMENT FACTORY
 # We cannot use flow.utils.registry.make_create_env because it wraps the env 
 # in a Single-Agent wrapper. We need our raw MultiAgent AlphaEnv.
+from copy import deepcopy
+
 def create_flow_env(env_config):
     params = env_config["flow_params"]
+
+    vehicles = deepcopy(params['veh'])
+    net_params = params['net']
+    sim_params = deepcopy(params['sim']) 
+
     network_class = params["network"]
     initial_config = params.get('initial', InitialConfig())
     traffic_lights = params.get("tls", TrafficLightParams())
 
+    # 3. Initialize the network with the variables defined above
     network = network_class(
             name='AlphaEnv-exp',
-            vehicles=vehicles,
-            net_params=net_params,
+            vehicles=vehicles,      # Now this variable actually exists
+            net_params=net_params,  # Now this variable actually exists
             initial_config=initial_config,
             traffic_lights=traffic_lights,
         )
 
+    # 4. Initialize the Environment
     env = AlphaEnv(
         env_params=params['env'], 
-        sim_params=params['sim'], 
-        network=network
+        sim_params=sim_params, 
+        network=network,
+        simulator=params['simulator'] 
     )
+    
     return env
 
-# Register the custom environment with a unique name
+#register env with ray multiagent
 env_name = "alpha_multiagent_v0"
 register_env(env_name, create_flow_env)
 
