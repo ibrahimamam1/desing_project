@@ -156,13 +156,14 @@ class AlphaEnv(Env_N):
         reward = -0.1
         
         # Collision penalty
-        # Note: 'fail' is passed from the base class step() method
         if kwargs.get("fail", False):
             reward -= 100
-
-        # Optional: Add goal reward if vehicle reaches specific edge/position
-        # if self.k.vehicle.get_edge(veh_id) == "goal_edge":
-        #     reward += 10
+        
+        #goal reached reward
+        sorted_ids = self.sorted_ids
+        if veh_id not in sorted_ids:
+            print("Vehicle reached goal, giving reward")
+            reward += 10
             
         return reward
 
