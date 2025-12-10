@@ -160,21 +160,30 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         """
         self.step_counter_within_rl_step = 0
         
-        # 1. Apply Actions (Outer Loop)
-        # Note: We pass the whole dict to `apply_rl_actions` and let the child class parse it
-        # or we assume `apply_rl_actions` expects a dict.
-        self.apply_rl_actions(action_dict)
-        self.additional_command()
+        #Check if vehicle is in control zone 
+        sorted_ids = set(self.sorted_ids)
+        
+        # Filter action_dict to only include agents that still exist
+        filtered_action_dict = {agent_id: action for agent_id, action in action_dict.items() 
+                           if agent_id in sorted_ids}
 
+        self.vehicles_to_control = [] 
+        for veh_id in sorted_ids:
+            position = self.k.vehicle.get_2d_position(veh_id) 
+
+            if(position[0] >= -12 and position[0] <= 12 and position[1]>=-12 and position[1]<=12):
+                print(f"id={veh_id}, Inside control zone at position = {position}")
+                self.vehicles_to_control.append(veh_id)
+
+        self.apply_rl_actions(filtered_action_dict)
+        self.additional_command()
+        
         # 2. Simulation Step (Inner Loop for frame-skipping/sims_per_step)
         for inner_step in range(self.env_params.sims_per_step):
             self.time_counter += self.sim_step
             self.step_counter += 1
             self.step_counter_within_rl_step = inner_step
             
-            # Debug Print (Optional)
-            # print(f"\n{CYAN}@ Simulation Time:{self.time_counter}s #Inner:{inner_step}{RESET}")
-
             # Handle Non-RL Controlled Vehicles (Flow Specifics)
             self._apply_non_rl_controls()
 
@@ -185,12 +194,10 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             # Rendering
             if self.sim_params.render:
                 self.k.vehicle.update_vehicle_colors()
-
-            # Check Collisions
-            if self.k.kernel_api.simulation.getCollidingVehiclesNumber() > 0:
-                self._handle_collision_debug()
-                # Stop simulation loop if crash occurs
-                break
+        
+        
+        new_sorted_ids = set(self.sorted_ids)
+        agents_that_left = sorted_ids - new_sorted_ids
 
         # 3. Retrieve Observations and Calculate Rewards
         states = self.get_state() # Should return a dict {agent_id: state}
@@ -198,11 +205,12 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         # Handle collision flag
         crash = self.k.kernel_api.simulation.getCollidingVehiclesNumber() > 0
         
-        # Define Termination
+        #check termination 
         terminated = (self.time_counter >= self.env_params.sims_per_step *
                  (self.env_params.warmup_steps + self.env_params.horizon)
-                 or crash)
-        
+                 or crash or len(sorted_ids) == 0)
+
+
         # Construct Multi-Agent Returns
         # We need to return dictionaries for RLlib
         obs_dict = states if isinstance(states, dict) else {} 
@@ -210,13 +218,24 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         terminateds = {"__all__": terminated}
         truncateds = {"__all__": False}
         infos = {}
+        
+        # Give rewards to agents that just left (goal reached)
+        for agent_id in agents_that_left:
+            reward_dict[agent_id] = self.compute_reward(agent_id, action_dict.get(agent_id), 
+                                                     fail=crash, goal_reached=True)
+            print(f"reward obtained = {reward_dict}")
+            terminateds[agent_id] = True
+            truncateds[agent_id] = False
+            infos[agent_id] = {}
+            obs_dict[agent_id] = np.zeros(self.observation_space.shape, dtype=np.float32) #dummy observation for rllib
 
         # Calculate rewards for agents present in observation
         # Note: We use the `crash` flag globally here, but you can check per-agent in compute_reward
         for agent_id in obs_dict.keys():
             # Get action for specific agent if available, else None
             agent_action = action_dict.get(agent_id) 
-            reward_dict[agent_id] = self.compute_reward(agent_id, agent_action, fail=crash)
+            reward_dict[agent_id] = self.compute_reward(agent_id, agent_action, fail=crash, goal_reached=agent_id not in sorted_ids)
+            print(f"reward obtained = {reward_dict}")
             terminateds[agent_id] = terminated
             truncateds[agent_id] = False
             infos[agent_id] = {}
@@ -306,7 +325,25 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         obs_dict = states if isinstance(states, dict) else {}
         
         return obs_dict, {}
+    
+    @property
+    def sorted_ids(self):
+        """Sort the vehicle ids of vehicles in the network by position.
+        This environment does this by sorting vehicles by their absolute
+        position, defined as their initial position plus distance traveled.
 
+        Returns
+        -------
+        list of str
+            a list of all vehicle IDs sorted by position
+        """ 
+        ids = self.k.vehicle.get_ids()
+        rl_ids = []
+        for id in ids:
+            if id.startswith("RL"):
+                rl_ids.append(id)
+        return rl_ids
+    
     def apply_rl_actions(self, action_dict):
         """
         Wrapper to handle clipping and pass to abstract method.
