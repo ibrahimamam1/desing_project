@@ -167,15 +167,8 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         filtered_action_dict = {agent_id: action for agent_id, action in action_dict.items() 
                            if agent_id in sorted_ids}
 
-        self.vehicles_to_control = [] 
-        for veh_id in sorted_ids:
-            position = self.k.vehicle.get_2d_position(veh_id) 
-
-            if(position[0] >= -12 and position[0] <= 12 and position[1]>=-12 and position[1]<=12):
-                print(f"id={veh_id}, Inside control zone at position = {position}")
-                self.vehicles_to_control.append(veh_id)
-
-        self.apply_rl_actions(filtered_action_dict)
+        if(filtered_action_dict):
+            self.apply_rl_actions(filtered_action_dict)
         self.additional_command()
         
         # 2. Simulation Step (Inner Loop for frame-skipping/sims_per_step)
@@ -201,7 +194,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
 
         # 3. Retrieve Observations and Calculate Rewards
         states = self.get_state() # Should return a dict {agent_id: state}
-        
+        print(states) 
         # Handle collision flag
         crash = self.k.kernel_api.simulation.getCollidingVehiclesNumber() > 0
         
@@ -223,7 +216,6 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         for agent_id in agents_that_left:
             reward_dict[agent_id] = self.compute_reward(agent_id, action_dict.get(agent_id), 
                                                      fail=crash, goal_reached=True)
-            print(f"reward obtained = {reward_dict}")
             terminateds[agent_id] = True
             truncateds[agent_id] = False
             infos[agent_id] = {}
@@ -235,7 +227,6 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             # Get action for specific agent if available, else None
             agent_action = action_dict.get(agent_id) 
             reward_dict[agent_id] = self.compute_reward(agent_id, agent_action, fail=crash, goal_reached=agent_id not in sorted_ids)
-            print(f"reward obtained = {reward_dict}")
             terminateds[agent_id] = terminated
             truncateds[agent_id] = False
             infos[agent_id] = {}

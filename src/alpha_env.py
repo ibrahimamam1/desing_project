@@ -71,7 +71,7 @@ class AlphaEnv(Env_N):
         ego_y = pos[1] / max_len
         
         ego_angle = self.k.vehicle.get_heading(ego_id) / 360.0
-        ego_intention = 1.0 # Placeholder from original code
+        ego_intention = 1.0 #TO MODIFY
         
         # Start the vector
         obs_vector = [ego_speed, ego_x, ego_y, ego_angle, ego_intention]
@@ -128,13 +128,12 @@ class AlphaEnv(Env_N):
         # Iterate through the dictionary provided by RLlib
         for veh_id, action in rl_actions_dict.items():
             
-            # OPTIONAL: Keep your "Control Zone" logic if desired
-            # This replicates the logic from your original step() function
             position = self.k.vehicle.get_2d_position(veh_id)
             in_box_x = -12 <= position[0] <= 12
             in_box_y = -12 <= position[1] <= 12
             
             if in_box_x and in_box_y:
+                print(f'{veh_id} control by Agent')
                 ids_to_apply.append(veh_id)
                 # Unpack the action (it comes as a list/array from RLlib)
                 if isinstance(action, (list, np.ndarray)):
@@ -142,7 +141,8 @@ class AlphaEnv(Env_N):
                 else:
                     actions_to_apply.append(action)
             else:
-                # Vehicle is outside control zone, do nothing (or let SUMO control)
+                # Vehicle is outside control zone, do nothing let SUMO control
+                print(f'{veh_id} control by SUMO')
                 pass
 
         if ids_to_apply:
