@@ -1,5 +1,0 @@
-time,id,x,y,speed,headway,leader_id,target_accel_with_noise_with_failsafe,target_accel_no_noise_no_failsafe,target_accel_with_noise_no_failsafe,target_accel_no_noise_with_failsafe,realized_accel,road_grade,edge_id,lane_number,distance,relative_position,follower_id,leader_rel_speed,waiting_time
-0.5,flow_00.0,-1.6,44.9,10.0,1000.0,,,,,,0,0,E#T-X,0,0.0,5.1,,-1011.0,0.0
-0.5,flow_10.0,44.9,1.6,10.0,1000.0,,,,,,0,0,E#R-X,0,0.0,5.1,,-1011.0,0.0
-0.5,flow_20.0,1.6,-44.9,10.0,1000.0,,,,,,0,0,E#D-X,0,0.0,5.1,,-1011.0,0.0
-0.5,flow_30.0,-44.9,-1.6,10.0,1000.0,,,,,,0,0,E#L-X,0,0.0,5.1,,-1011.0,0.0

@@ -1,5 +1,0 @@
-time,id,x,y,speed,headway,leader_id,target_accel_with_noise_with_failsafe,target_accel_no_noise_no_failsafe,target_accel_with_noise_no_failsafe,target_accel_no_noise_with_failsafe,realized_accel,road_grade,edge_id,lane_number,distance,relative_position,follower_id,leader_rel_speed,waiting_time
-0,RL_0,-1.6,20.383440079686316,0.0,1000.0,,,,,,0,0,E#T-X,0,0.0,29.616559920313684,,-1001.0,0.0
-0.5,RL_0,-1.6,19.73344163826167,1.2999968828492905,1000.0,,,,,,2.599993765698581,0,E#T-X,0,0.6499984414246462,30.26655836173833,,-1002.2999968828493,0.0
-0,RL_1,21.73291408324467,1.6,0.0,1000.0,,,,,,0,0,E#R-X,0,0.0,28.26708591675533,,-1001.0,0.0
-0.5,RL_1,21.082915641820023,1.6,1.2999968828492905,1000.0,,,,,,2.599993765698581,0,E#R-X,0,0.6499984414246462,28.917084358179977,,-1002.2999968828493,0.0
