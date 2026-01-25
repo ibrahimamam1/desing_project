@@ -6,7 +6,6 @@ from ray.rllib.algorithms.ppo import PPOConfig
 from ray.tune.registry import register_env
 import ray
 from flow.envs.ring.accel import ADDITIONAL_ENV_PARAMS
-from src.alpha_env import AlphaEnv as myEnv
 from flow.networks.all_turning_intersection import AllTurningIntersectionNetwork as myNet
 from flow.core.params import InFlows
 import os
@@ -34,7 +33,7 @@ min_gap = 0.9
 max_accel = 2.6
 max_decel = 4.5
 max_speed = 30
-initial_speed = 5
+initial_speed = 0
 speed_factor = 1.0
 speed_dev = 0.0
 impatience = 0.0
@@ -190,8 +189,8 @@ initial_config = InitialConfig(
     spacing="uniform",  # "random",#"uniform",
     # min_gap, #minimum gap between two vehicles upon initialization, in meters.Default is 0 m.
     min_gap=12,
-    perturbation=0.0,
-    x0=10,
+    perturbation=5.0,
+    x0=5,
     bunching=0,
     lanes_distribution=float("inf"),
     edges_distribution=EDGES_DISTRIBUTION,
@@ -253,7 +252,7 @@ sim_params = SumoParams(
 
 flow_params = dict(
     exp_tag=myTag,
-    env_name=myEnv,  # using my new environment for the simulation
+    env_name=AlphaEnv,  # using my new environment for the simulation
     network=myNet,
     simulator='traci',
     sim=sim_params,
@@ -267,13 +266,6 @@ flow_params = dict(
 
 
 sys.path.append(os.path.dirname(__file__))
-
-################################ Initializing Ray ####################
-ray.init(local_mode=True, ignore_reinit_error=True)
-
-# We cannot use flow.utils.registry.make_create_env because it wraps the env
-# in a Single-Agent wrapper. We need our raw MultiAgent AlphaEnv.
-
 
 def create_flow_env(env_config):
     params = env_config["flow_params"]
@@ -306,74 +298,11 @@ def create_flow_env(env_config):
     return env
 
 
-# register env with ray multiagent
-env_name = "alpha_multiagent_v0"
-register_env(env_name, create_flow_env)
+env = create_flow_env()
+obs, info = env.reset()
+done = False 
 
-# DEFINE PARAMETER SHARING (PPO CONFIG)
+while not done:
+    actions = []
+    obs,reward,done,_,_ = env.step(actions)
 
-# Define the shapes of observation and action spaces
-# Obs: (1 ego + 5 neighbors) * 5 features = 30
-obs_dim = 30
-dummy_obs_space = gym.spaces.Box(
-    low=float("-inf"), high=float("inf"), shape=(obs_dim,), dtype=np.float32)
-
-# Act: 1 value (acceleration)
-dummy_act_space = gym.spaces.Box(
-    low=-4.5, high=10.0, shape=(1,), dtype=np.float32)
-
-# Define the "Shared Policy"
-policies = {
-    "shared_policy": (
-        None,             # Use default PPO Policy class
-        dummy_obs_space,
-        dummy_act_space,
-        {}                # Extra config
-    )
-}
-
-# We map ALL agents to the SAME policy (Parameter Sharing)
-
-
-def policy_mapping_fn(agent_id, episode, worker, **kwargs):
-    return "shared_policy"
-
-# 3. CONFIGURE AND TRAIN PPO
-
-
-ray.init(local_mode=True, ignore_reinit_error=True)
-
-config = (PPOConfig()
-          .environment(
-              env=env_name,
-              # Pass the flow_params dictionary so the factory can use it
-              env_config={"flow_params": flow_params},
-              # Disable Gym API checks (critical for Flow)
-              disable_env_checking=True
-)
-    .framework("torch")
-    .training(
-    lr=0.001,
-    clip_param=0.2,
-    train_batch_size=4000,
-    sgd_minibatch_size=128,
-    num_sgd_iter=10
-)
-    .multi_agent(
-              policies=policies,
-              policy_mapping_fn=policy_mapping_fn,
-              policies_to_train=["shared_policy"],
-)
-    # Set to 0 GPUs and 0 workers for easier debugging/local testing
-    .resources(num_gpus=0)
-    .rollouts(num_rollout_workers=0, num_envs_per_worker=1)
-)
-
-algo = config.build()
-
-print("Starting Training...")
-for i in range(10):
-    result = algo.train()
-    print(f"Iteration: {i}, Mean Reward: {result['episode_reward_mean']}")
-
-algo.stop()
