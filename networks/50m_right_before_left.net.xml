@@ -60,10 +60,10 @@
     <edge id=":X_7" function="internal">
         <lane id=":X_7_0" index="0" speed="13.89" length="24.00" shape="1.60,-12.00 1.60,12.00"/>
     </edge>
-    <edge id=":X_8" function="internal">
-        <lane id=":X_8_0" index="0" speed="25.43" length="5.90" shape="1.60,-12.00 1.60,-6.10 1.60,-2.50 1.20,-1.00 0.50,0.50 -0.80,1.20 -2.50,1.60 -12.00,1.60"/>
-    </edge>
-    <edge id=":X_9" function="internal">
+   <edge id=":X_8" function="internal">
+        <lane id=":X_8_0" index="0" speed="8.00" length="25.43" shape="1.60,-12.00 1.60,-6.10 1.60,-2.50 1.20,-0.80 0.50,0.50 -0.80,1.20 -2.50,1.60 -6.10,1.60 -12.00,1.60"/>
+  </edge>
+  <edge id=":X_9" function="internal">
         <lane id=":X_9_0" index="0" speed="6.51" length="17.06" shape="-12.00,-1.60 -8.00,-1.90 -5.40,-3.00 -3.15,-5.20 -1.90,-8.00 -1.60,-12.00"/>
     </edge>
     <edge id=":X_10" function="internal">
