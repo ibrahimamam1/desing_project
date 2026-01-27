@@ -46,8 +46,8 @@ results_dir = os.path.join(root_dir, "results")
 emmision_dir = os.path.join(results_dir, "emmisions")
 net_file_dir = os.path.join(root_dir, "networks")
 
-net_file_name = "50m_right_before_left.net.xml"
-net_file = os.path.join(net_file_dir, net_file_name)
+# Define network files with descriptive names
+file_name = "50m_fixed_tl.net.xml"
 
 EDGES_DISTRIBUTION = [
     "E#D-X",
@@ -72,7 +72,7 @@ initial_config = InitialConfig(
 myTag = "Benchmark Experiment"
 
 ############################## Environment Configuration  ###############################
-horizon = 260
+horizon = 3000
 sim_step = 0.5
 number_of_sim_steps_per_RlAction_step = 1
 
@@ -97,7 +97,7 @@ sim_params = SumoParams(
     emission_path=emmision_dir,
     lateral_resolution=None,
     no_step_log=True,
-    render=False,
+    render=True, 
     save_render=False,
     sight_radius=25,
     show_radius=False,
@@ -124,129 +124,93 @@ sim_params = SumoParams(
 from non_rl_test_env import TestEnv
 
 # Define traffic rates to test
-traffic_rates = [1000, 1200, 1400, 1600, 1800, 2000]
+traffic_rate = 1000
 
-# Run experiment for each traffic rate
-for traffic_rate in traffic_rates:
-    print(f"\n{'='*60}")
-    print(f"Running experiment with traffic rate: {traffic_rate} veh/hr")
-    print(f"{'='*60}\n")
+net_file = os.path.join(net_file_dir, file_name)
     
-    # Create fresh VehicleParams for each experiment
-    vehicles = VehicleParams()
-    vehicles.add(
-        veh_id="NonRL",
-        acceleration_controller=(IDMController, {}),
-        car_following_params=SumoCarFollowingParams(
-            min_gap=min_gap,
-            max_speed=max_speed,
-            speed_mode=speed_mode,
-            accel=max_accel,
-            decel=max_decel,
-            sigma=sigma,
-            tau=tau,
-        ),
-        num_vehicles=0
-    )
-    
-    # Create InFlows with current traffic rate
-    # Divide by 4 so traffic_rate represents TOTAL traffic across all 4 directions
-    rate_per_direction = traffic_rate / 4.0
-    inflow = InFlows()
-    
-    # All directions use 1/4 of the total rate
-    inflow.add(
-        veh_type="NonRL",
-        edge="E#T-X",
-        probability=rate_per_direction / 3600.0,
-        depart_lane="free",
-        depart_speed=initial_speed,
-        begin=1,
-        end=3600,
-    )
-    
-    inflow.add(
-        veh_type="NonRL",
-        edge="E#R-X",
-        probability=rate_per_direction / 3600.0,
-        depart_lane="free",
-        depart_speed=initial_speed,
-        begin=1,
-        end=3600,
-    )
-    
-    inflow.add(
-        veh_type="NonRL",
-        edge="E#D-X",
-        probability=rate_per_direction / 3600.0,
-        depart_lane="free",
-        depart_speed=initial_speed,
-        begin=1,
-        end=3600,
-    )
-    
-    inflow.add(
-        veh_type="NonRL",
-        edge="E#L-X",
-        probability=rate_per_direction / 3600.0,
-        depart_lane="free",
-        depart_speed=initial_speed,
-        begin=1,
-        end=3600,
-    )
-    
-    # Create NetParams with current inflow
-    net_params = NetParams(
-        inflows=inflow,
-        osm_path=None,
-        template=net_file,
-    )
-    
-    # Create flow_params for current experiment
-    flow_params = dict(
-        exp_tag=myTag,
-        env_name=TestEnv,
-        network=myNet,
-        simulator='traci',
-        sim=sim_params,
-        env=env_params,
-        net=net_params,
-        veh=vehicles,
-        initial=initial_config,
-    )
-    
-    # Set horizon
-    flow_params['env'].horizon = 3000
-    
-    # Run experiment
-    from flow.core.experiment_new import Experiment
-    exp = Experiment(flow_params)
-    _ = exp.run(1, convert_to_csv=True)
-    
-    # Process results
-    from result_summary import process_emission_data
-    import glob
-    
-    # Find the most recent emission file
-    emission_pattern = os.path.join(emmision_dir, "*_emission.csv")
-    emission_files = glob.glob(emission_pattern)
-    
-    if emission_files:
-        # Get the most recently created file
-        emmision_file = max(emission_files, key=os.path.getctime)
-        print(f"Found emission file: {emmision_file}")
-        
-        # Create output filename with traffic rate
-        summary_file_name = os.path.join(
-            os.path.join(results_dir, "processed"), 
-            f"row_{traffic_rate}veh_hr.csv"
+vehicles = VehicleParams()
+vehicles.add(
+            veh_id="NonRL",
+            acceleration_controller=(IDMController, {}),
+            car_following_params=SumoCarFollowingParams(
+                min_gap=min_gap,
+                max_speed=max_speed,
+                speed_mode=speed_mode,
+                accel=max_accel,
+                decel=max_decel,
+                sigma=sigma,
+                tau=tau,
+            ),
+            num_vehicles=0  # FIXED: Proper indentation
         )
-        
-        df = process_emission_data(emmision_file, summary_file_name)
-        print(f"Processed results saved to: {summary_file_name}")
-    else:
-        print(f"No emission files found for traffic rate {traffic_rate}!")
-
-print(f"\n{'='*60}")
-print("All experiments completed!")
-print(f"{'='*60}\n")
+    
+rate_per_direction = traffic_rate / 4.0
+inflow = InFlows()
+    
+# All directions use 1/4 of the total rate
+inflow.add(
+            veh_type="NonRL",
+            edge="E#T-X",
+            probability=rate_per_direction / 3600.0,
+            depart_lane="free",
+            depart_speed=initial_speed,
+            begin=1,
+            end=3600,
+        )
+    
+inflow.add(
+            veh_type="NonRL",
+            edge="E#R-X",
+            probability=rate_per_direction / 3600.0,
+            depart_lane="free",
+            depart_speed=initial_speed,
+            begin=1,
+            end=3600,
+        )
+    
+inflow.add(
+            veh_type="NonRL",
+            edge="E#D-X",
+            probability=rate_per_direction / 3600.0,
+            depart_lane="free",
+            depart_speed=initial_speed,
+            begin=1,
+            end=3600,
+        )
+    
+inflow.add(
+            veh_type="NonRL",
+            edge="E#L-X",
+            probability=rate_per_direction / 3600.0,
+            depart_lane="free",
+            depart_speed=initial_speed,
+            begin=1,
+            end=3600,
+        )
+    
+# Create NetParams with current inflow
+net_params = NetParams(
+            inflows=inflow,
+            osm_path=None,
+            template=net_file,
+        )
+    
+        # Create flow_params for current experiment
+flow_params = dict(
+            exp_tag=myTag,
+            env_name=TestEnv,
+            network=myNet,
+            simulator='traci',
+            sim=sim_params,
+            env=env_params,
+            net=net_params,
+            veh=vehicles,
+            initial=initial_config,
+        )
+    
+    
+# Run experiment
+from flow.core.experiment_new import Experiment
+exp = Experiment(flow_params)
+_ = exp.run(1, convert_to_csv=True)
+ 
