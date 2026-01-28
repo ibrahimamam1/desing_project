@@ -47,7 +47,7 @@ emmision_dir = os.path.join(results_dir, "emmisions")
 net_file_dir = os.path.join(root_dir, "networks")
 
 # Define network files with descriptive names
-file_name = "50m_fixed_tl.net.xml"
+file_name = "50m_right_before_left.net.xml"
 
 EDGES_DISTRIBUTION = [
     "E#D-X",
@@ -123,8 +123,6 @@ sim_params = SumoParams(
 
 from non_rl_test_env import TestEnv
 
-# Define traffic rates to test
-traffic_rate = 1000
 
 net_file = os.path.join(net_file_dir, file_name)
     
@@ -144,14 +142,13 @@ vehicles.add(
             num_vehicles=0  # FIXED: Proper indentation
         )
     
-rate_per_direction = traffic_rate / 4.0
 inflow = InFlows()
     
 # All directions use 1/4 of the total rate
 inflow.add(
             veh_type="NonRL",
             edge="E#T-X",
-            probability=rate_per_direction / 3600.0,
+            probability=400 / 3600.0,
             depart_lane="free",
             depart_speed=initial_speed,
             begin=1,
@@ -161,7 +158,7 @@ inflow.add(
 inflow.add(
             veh_type="NonRL",
             edge="E#R-X",
-            probability=rate_per_direction / 3600.0,
+            probability=600 / 3600.0,
             depart_lane="free",
             depart_speed=initial_speed,
             begin=1,
@@ -171,7 +168,7 @@ inflow.add(
 inflow.add(
             veh_type="NonRL",
             edge="E#D-X",
-            probability=rate_per_direction / 3600.0,
+            probability=800 / 3600.0,
             depart_lane="free",
             depart_speed=initial_speed,
             begin=1,
@@ -181,7 +178,7 @@ inflow.add(
 inflow.add(
             veh_type="NonRL",
             edge="E#L-X",
-            probability=rate_per_direction / 3600.0,
+            probability=1000 / 3600.0,
             depart_lane="free",
             depart_speed=initial_speed,
             begin=1,

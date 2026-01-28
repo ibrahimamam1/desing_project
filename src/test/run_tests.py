@@ -1,5 +1,6 @@
 import sys 
 import os 
+from copy import deepcopy 
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from networks.all_straight import AllStraghtNetwork
@@ -17,9 +18,9 @@ scenarios = {
 }
 
 ### Traffic rates
-high_rate = 2000
-medium_rate = 1600
-low_rate = 1200
+high_rate = 1000
+medium_rate = 600
+low_rate = 200
 
 traffic_rates = {
     "4H" : {"N": high_rate, "S": high_rate, "W": high_rate, "E": high_rate},
@@ -118,8 +119,31 @@ sim_params = SumoParams(
         use_ballistic=False, 
     )
 
+car_follow_params = SumoCarFollowingParams(
+                min_gap=min_gap,
+                max_speed=max_speed,
+                speed_mode=speed_mode,
+                accel=max_accel,
+                decel=max_decel,
+                sigma=sigma,
+                tau=tau,
+            )
 # Run All Possible combinations
 for scenario in scenarios:
     for traffic_rate in traffic_rates:
-            for intention in intentions:
-                run_simulation(scenario, traffic_rate, intention, initial_config, env_params, sim_params)
+        for intention in intentions:
+            print(f"--- Starting: {scenario} | {traffic_rate} | {intention} ---")
+            
+            # CRITICAL FIX: Use deepcopy() here
+            run_simulation(
+                scenario, 
+                scenarios[scenario], 
+                traffic_rates[traffic_rate], 
+                intentions[intention], 
+                deepcopy(initial_config), 
+                deepcopy(env_params), 
+                deepcopy(sim_params), 
+                deepcopy(car_follow_params)
+            )
+            
+            print(f"--- Finished: {scenario} | {traffic_rate} | {intention} ---")
