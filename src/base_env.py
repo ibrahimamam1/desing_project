@@ -1,5 +1,4 @@
 """Base environment class. This is the parent of all other environments."""
-
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 from abc import ABCMeta, abstractmethod
 from copy import deepcopy
@@ -12,6 +11,7 @@ import numpy as np
 import random
 import shutil
 import subprocess
+import csv
 from flow.renderer.pyglet_renderer import PygletRenderer as Renderer
 from flow.utils.flow_warnings import deprecated_attribute
 
@@ -45,6 +45,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
                  simulator='traci',
                  scenario=None,
                  render_mode=None,
+                 telemetry_file="simulation_telemetry.csv"  # <--- CSV File Path
                  ):
         
         # Initialize Ray MultiAgentEnv
@@ -73,6 +74,31 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
 
         self.sim_step = sim_params.sim_step
         self.simulator = simulator
+
+        # --- TELEMETRY SETUP ---
+        self.telemetry_file = telemetry_file
+        
+        # Check/Create CSV header
+        if not os.path.exists(self.telemetry_file):
+            with open(self.telemetry_file, mode='w', newline='') as f:
+                writer = csv.writer(f)
+                header = [
+                    "episode_duration", 
+                    "number_of_vehicles_completed",  # Combined Metric (Emitted/Exited)
+                    "number_of_collisions",
+                    "min_travel_time", 
+                    "max_travel_time", 
+                    "avg_travel_time", 
+                    "total_travel_time",             # Sum of individual travel times
+                    "min_time_in_control_zone", 
+                    "max_time_in_control_zone", 
+                    "avg_time_in_control_zone", 
+                    "total_time_in_control_zone"
+                ]
+                writer.writerow(header)
+
+        # Telemetry Accumulators (Reset every episode in reset())
+        self.telemetry = None 
 
         # --- FLOW KERNEL INITIALIZATION ---
         self.k = Kernel(simulator=self.simulator, sim_params=self.sim_params)
@@ -104,7 +130,6 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
 
         # Renderer Setup
         if self.sim_params.render in ['gray', 'dgray', 'rgb', 'drgb']:
-            # ... (Existing rendering code preserved)
             save_render = self.sim_params.save_render
             sight_radius = self.sim_params.sight_radius
             pxpm = self.sim_params.pxpm
@@ -151,91 +176,195 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         self.k.pass_api(kernel_api)
         self.setup_initial_state()
 
+    # --- TELEMETRY HELPERS ---
+
+    def _init_telemetry(self):
+        """Resets telemetry storage for a new episode."""
+        self.telemetry = {
+            "entry_times": {},        # {veh_id: float (time_step)}
+            "travel_times": [],       # [float] (duration for finished vehicles)
+            "zone_durations": {},     # {veh_id: float} (accumulated time in zone)
+            "collisions": 0           # int
+        }
+
+    def _is_in_control_zone(self, veh_id):
+        """
+        Determines if a vehicle is in the control zone.
+        TODO: Customize this logic based on your specific network geometry.
+        """
+        # Example: Checks if vehicle is an RL agent or specific edge
+        return veh_id in self.k.vehicle.get_rl_ids()
+
+    def _update_telemetry_step(self):
+        """
+        Updates internal accumulators. 
+        MUST be called inside the inner simulation loop.
+        """
+        current_time = self.time_counter
+
+        # 1. Track Entries (to calculate travel time later)
+        newly_departed = self.k.vehicle.get_departed_ids()
+        for veh_id in newly_departed:
+            if veh_id not in self.telemetry["entry_times"]:
+                self.telemetry["entry_times"][veh_id] = current_time
+                self.telemetry["zone_durations"][veh_id] = 0.0
+
+        # 2. Track Exits (Compute Travel Time)
+        newly_arrived = self.k.vehicle.get_arrived_ids()
+        for veh_id in newly_arrived:
+            if veh_id in self.telemetry["entry_times"]:
+                duration = current_time - self.telemetry["entry_times"][veh_id]
+                self.telemetry["travel_times"].append(duration)
+                # Remove from tracking to save memory
+                del self.telemetry["entry_times"][veh_id]
+
+        # 3. Track Control Zone Time
+        # Iterate over all currently active vehicles
+        for veh_id in self.k.vehicle.get_ids():
+            if self._is_in_control_zone(veh_id):
+                # Ensure entry exists if vehicle started inside zone
+                if veh_id not in self.telemetry["zone_durations"]:
+                    self.telemetry["zone_durations"][veh_id] = 0.0
+                
+                # Add one simulation step of duration
+                self.telemetry["zone_durations"][veh_id] += self.sim_step
+
+        # 4. Track Collisions
+        n_colliding = self.k.kernel_api.simulation.getCollidingVehiclesNumber()
+        if n_colliding > 0:
+            self.telemetry["collisions"] += n_colliding
+
+    def _finalize_and_write_telemetry(self):
+        """
+        Calculates aggregates and writes ONE row to the CSV.
+        Called only when terminated is True.
+        """
+        travel_times = self.telemetry["travel_times"]
+        zone_durations = list(self.telemetry["zone_durations"].values())
+        
+        # --- Travel Time Stats ---
+        num_completed = len(travel_times)
+        if num_completed > 0:
+            min_tt = min(travel_times)
+            max_tt = max(travel_times)
+            total_tt = sum(travel_times) # Constraint 2: Sum of individual times
+            avg_tt = total_tt / num_completed
+        else:
+            min_tt = max_tt = total_tt = avg_tt = 0
+
+        # --- Control Zone Stats ---
+        # Filter for vehicles that actually spent time in the zone
+        valid_zone_times = [t for t in zone_durations if t > 0]
+        if valid_zone_times:
+            min_zone = min(valid_zone_times)
+            max_zone = max(valid_zone_times)
+            total_zone = sum(valid_zone_times)
+            avg_zone = total_zone / len(valid_zone_times)
+        else:
+            min_zone = max_zone = total_zone = avg_zone = 0
+
+        # --- Prepare Row ---
+        row = [
+            self.time_counter,      # Episode Duration
+            num_completed,          # Emitted/Successful Exits (Constraint 1)
+            self.telemetry["collisions"],
+            min_tt, 
+            max_tt, 
+            avg_tt, 
+            total_tt,
+            min_zone, 
+            max_zone, 
+            avg_zone, 
+            total_zone
+        ]
+
+        # --- Write Single Row (Constraint 3) ---
+        try:
+            with open(self.telemetry_file, mode='a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(row)
+            # Optional: Feedback to console
+            # print(f"Telemetry saved: {num_completed} vehicles, Total TT: {total_tt}")
+        except Exception as e:
+            print(f"{RED}Error writing telemetry: {e}{RESET}")
+
+    # -------------------------
+
     def step(self, action_dict):
         """
         Advance the environment by one step.
-        
-        MODIFIED: Accepts `action_dict` (Key: AgentID, Value: Action)
-        Returns: obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
         """
         self.step_counter_within_rl_step = 0
         
-        #Check if vehicle is in control zone 
         sorted_ids = set(self.sorted_ids)
-        
-        # Filter action_dict to only include agents that still exist
-        filtered_action_dict = {agent_id: action for agent_id, action in action_dict.items() 
-                           if agent_id in sorted_ids}
 
-        if(filtered_action_dict):
-            self.apply_rl_actions(filtered_action_dict)
+        self.apply_rl_actions(None) 
         self.additional_command()
         
-        # 2. Simulation Step (Inner Loop for frame-skipping/sims_per_step)
+        # 2. Simulation Step (Inner Loop)
         for inner_step in range(self.env_params.sims_per_step):
             self.time_counter += self.sim_step
             self.step_counter += 1
             self.step_counter_within_rl_step = inner_step
             
-            # Handle Non-RL Controlled Vehicles (Flow Specifics)
             self._apply_non_rl_controls()
 
             # Advance Simulator
             self.k.simulation.simulation_step()
             self.k.update(reset=False)
             
-            # Rendering
+            # --- UPDATE TELEMETRY (Per Sim Step) ---
+            self._update_telemetry_step()
+            # ---------------------------------------
+
             if self.sim_params.render:
                 self.k.vehicle.update_vehicle_colors()
-        
         
         new_sorted_ids = set(self.sorted_ids)
         agents_that_left = sorted_ids - new_sorted_ids
 
-        # 3. Retrieve Observations and Calculate Rewards
-        states = self.get_state() # Should return a dict {agent_id: state}
-        print(states) 
-        # Handle collision flag
+        # 3. Retrieve Observations and Rewards
+        states = self.get_state() 
+        
         crash = self.k.kernel_api.simulation.getCollidingVehiclesNumber() > 0
         
-        #check termination 
         terminated = (self.time_counter >= self.env_params.sims_per_step *
-                 (self.env_params.warmup_steps + self.env_params.horizon)
-                 or crash or len(sorted_ids) == 0)
+                     (self.env_params.warmup_steps + self.env_params.horizon)
+                     or crash or len(sorted_ids) == 0)
 
+        # --- SAVE TELEMETRY (Once at end) ---
+        if terminated:
+            self._finalize_and_write_telemetry()
+        # ------------------------------------
 
         # Construct Multi-Agent Returns
-        # We need to return dictionaries for RLlib
         obs_dict = states if isinstance(states, dict) else {} 
         reward_dict = {}
         terminateds = {"__all__": terminated}
         truncateds = {"__all__": False}
         infos = {}
         
-        # Give rewards to agents that just left (goal reached)
         for agent_id in agents_that_left:
             reward_dict[agent_id] = self.compute_reward(agent_id, action_dict.get(agent_id), 
-                                                     fail=crash, goal_reached=True)
+                                                        fail=crash, goal_reached=True)
             terminateds[agent_id] = True
             truncateds[agent_id] = False
             infos[agent_id] = {}
-            obs_dict[agent_id] = np.zeros(self.observation_space.shape, dtype=np.float32) #dummy observation for rllib
+            if hasattr(self, 'observation_space'):
+                 obs_dict[agent_id] = np.zeros(self.observation_space.shape, dtype=np.float32)
 
-        # Calculate rewards for agents present in observation
-        # Note: We use the `crash` flag globally here, but you can check per-agent in compute_reward
         for agent_id in obs_dict.keys():
-            # Get action for specific agent if available, else None
-            agent_action = action_dict.get(agent_id) 
-            reward_dict[agent_id] = self.compute_reward(agent_id, agent_action, fail=crash, goal_reached=agent_id not in sorted_ids)
-            terminateds[agent_id] = terminated
-            truncateds[agent_id] = False
-            infos[agent_id] = {}
+            if agent_id not in agents_that_left:
+                agent_action = action_dict.get(agent_id) 
+                reward_dict[agent_id] = self.compute_reward(agent_id, agent_action, fail=crash, goal_reached=False)
+                terminateds[agent_id] = terminated
+                truncateds[agent_id] = False
+                infos[agent_id] = {}
 
         return obs_dict, reward_dict, terminateds, truncateds, infos
 
     def _apply_non_rl_controls(self):
         """Helper to handle IDM/LaneChange controllers for non-RL vehicles."""
-        # Acceleration
         if len(self.k.vehicle.get_controlled_ids()) > 0:
             accel = []
             for veh_id in self.k.vehicle.get_controlled_ids():
@@ -244,7 +373,6 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             self.k.vehicle.apply_acceleration(
                 self.k.vehicle.get_controlled_ids(), accel)
 
-        # Lane Change
         if len(self.k.vehicle.get_controlled_lc_ids()) > 0:
             direction = []
             for veh_id in self.k.vehicle.get_controlled_lc_ids():
@@ -253,16 +381,14 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             self.k.vehicle.apply_lane_change(
                 self.k.vehicle.get_controlled_lc_ids(), direction=direction)
 
-    def _handle_collision_debug(self):
-        """Helper to print collision info."""
-        unique_colliding = set(self.k.kernel_api.simulation.getCollidingVehiclesIDList())
-        print(f"\n {RED}!!!! Colliding Vehicles Count:{len(unique_colliding)} IDs:{unique_colliding}{RESET}")
-
     def reset(self, *, seed=None, options=None):
         """
         Reset the environment.
-        Returns: obs_dict, info_dict
         """
+        # --- RESET TELEMETRY ---
+        self._init_telemetry()
+        # -----------------------
+
         super().reset(seed=seed)
         
         self.time_counter = 0
@@ -270,7 +396,6 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             self.sim_params.render = True
             self.restart_simulation(self.sim_params)
 
-        # Handle Restarts (Flow logic)
         if self.sim_params.restart_instance or (self.step_counter > 2e6 and self.simulator != 'aimsun'):
             self.step_counter = 0
             self.sim_params.seed = random.randint(0, 1e5)
@@ -282,9 +407,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         elif self.initial_config.shuffle:
             self.setup_initial_state()
 
-        # Clean vehicles
         if self.simulator == 'traci':
-             # Hacky cleanup for TraCI
             try:
                 for veh_id in self.k.kernel_api.vehicle.getIDList():
                     self.k.vehicle.remove(veh_id)
@@ -293,13 +416,11 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
 
         self.k.vehicle.reset()
 
-        # Re-add initial vehicles
         for veh_id in self.initial_ids:
             type_id, edge, lane_index, pos, speed = self.initial_state[veh_id]
             try:
                 self.k.vehicle.add(veh_id, type_id, edge, lane_index, pos, speed)
             except (FatalTraCIError, TraCIException):
-                # Retry logic
                 self.k.vehicle.remove(veh_id)
                 if self.simulator == 'traci':
                     self.k.kernel_api.vehicle.remove(veh_id)
@@ -311,23 +432,14 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         if self.sim_params.render:
             self.k.vehicle.update_vehicle_colors()
 
-        # Get Initial Observation
-        states = self.get_state() # Returns dict {agent_id: obs}
+        states = self.get_state()
         obs_dict = states if isinstance(states, dict) else {}
         
         return obs_dict, {}
     
     @property
     def sorted_ids(self):
-        """Sort the vehicle ids of vehicles in the network by position.
-        This environment does this by sorting vehicles by their absolute
-        position, defined as their initial position plus distance traveled.
-
-        Returns
-        -------
-        list of str
-            a list of all vehicle IDs sorted by position
-        """ 
+        """Sort the vehicle ids of vehicles in the network by position.""" 
         ids = self.k.vehicle.get_ids()
         rl_ids = []
         for id in ids:
@@ -336,16 +448,9 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         return rl_ids
     
     def apply_rl_actions(self, action_dict):
-        """
-        Wrapper to handle clipping and pass to abstract method.
-        action_dict: {agent_id: action}
-        """
         if action_dict is None:
             return
 
-        # Clip actions if needed
-        # Note: In MultiAgent, action_space might be per agent. 
-        # Assuming homogeneous action space here for simplicity (shared Box)
         clipped_dict = {}
         for agent_id, action in action_dict.items():
             if isinstance(self.action_space, Box):
@@ -356,25 +461,19 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
                 
         self._apply_rl_actions(clipped_dict)
 
-    # --- Abstract Methods (Must be implemented by AlphaEnv) ---
-    
     @abstractmethod
     def _apply_rl_actions(self, rl_actions):
-        """Implement specific action application logic (using dict)."""
         pass
 
     @abstractmethod
     def get_state(self):
-        """Must return a DICTIONARY: {agent_id: observation}."""
         pass
 
     @abstractmethod
     def compute_reward(self, agent_id, rl_action, **kwargs):
-        """Calculate reward for a single agent."""
         pass
 
     def setup_initial_state(self):
-        #RANDOMIZE STARTING EDGE
         if isinstance(self.initial_config.edges_distribution, list):
             random.shuffle(self.initial_config.edges_distribution)
 
@@ -385,30 +484,20 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             initial_config=self.initial_config,
             num_vehicles=len(self.initial_ids))
 
-        print(f"@@@ DEBUG setup_initial_state: start_pos = {start_pos}")
-        print(f"@@@ DEBUG setup_initial_state: start_lanes = {start_lanes}")
-
-        #===================ADDED BY IBRAHIMA STARTS=================#
-        # Track occupied edges
         occupied_edges = set()
 
         for i, veh_id in enumerate(self.initial_ids):
             type_id = self.k.vehicle.get_type(veh_id)
             pos = start_pos[i][1]
-            lane = 0
             speed = self.k.vehicle.get_initial_speed(veh_id)
 
-            # Randomly select an edge that hasn't been used yet
             available_edges = [e for e in self.initial_config.edges_distribution if e not in occupied_edges]
             if available_edges:
                 edge = random.choice(available_edges)
             else:
-                # If all edges are occupied, just pick any edge
                 edge = random.choice(self.initial_config.edges_distribution)
-            # Mark this edge as occupied
             occupied_edges.add(edge)
 
-            print(f"@@@ DEBUG setup_initial_state: veh_id={veh_id}, edge={edge}, lane={lane} (type: {type(lane)}), pos={pos}")
             self.initial_state[veh_id] = (type_id, edge, 0, pos, speed)
 
     def additional_command(self):
@@ -421,7 +510,6 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
                 self.renderer.close()
         except:
             pass
-
     def render(self, reset=False, buffer_length=5):
         """Render a frame.
 

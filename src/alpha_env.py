@@ -111,7 +111,7 @@ class AlphaEnv(Env_N):
             padding = [0.0] * (needed_length - current_length)
             obs_vector.extend(padding)
             
-        return np.array(obs_vector, dtype=np.float32)
+        return []
 
     def _apply_rl_actions(self, rl_actions_dict):
         """
@@ -165,7 +165,7 @@ class AlphaEnv(Env_N):
             print("Vehicle reached goal, giving reward")
             reward += 10
             
-        return reward
+        return 0
 
     def additional_command(self):
         """
