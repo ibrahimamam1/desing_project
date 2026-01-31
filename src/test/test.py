@@ -73,7 +73,7 @@ initial_config = InitialConfig(
 myTag = "Benchmark Experiment"
 
 ############################## Environment Configuration  ###############################
-horizon = 3000
+horizon = 1000
 sim_step = 0.5
 number_of_sim_steps_per_RlAction_step = 1
 
@@ -224,10 +224,8 @@ except Exception as e:
         print(f"create_env: {create_env}")
         raise Exception("Could not create environment")
 
-episodes = 100
-for _ in range(episodes):
-    obs, info = env.reset()
-    done = False 
+obs, info = env.reset()
+done = False 
 
-    while not done:
-        obs,_,_,_,_ = env.step([])
+while not done:
+    obs,reward,done,_,_ = env.step([])
