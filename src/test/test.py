@@ -15,6 +15,7 @@ from flow.controllers import IDMController  # for NON-RL controlled Vehicles
 
 import random
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from alpha_env import AlphaEnv
 
 ################ Acceleration Controllers #######################
 IDM_acceleration_controller = IDMController
@@ -121,8 +122,6 @@ sim_params = SumoParams(
     use_ballistic=False  # If true, use a ballistic integration step instead of an euler step
 )
 
-from non_rl_test_env import TestEnv
-
 
 net_file = os.path.join(net_file_dir, file_name)
     
@@ -195,7 +194,7 @@ net_params = NetParams(
         # Create flow_params for current experiment
 flow_params = dict(
             exp_tag=myTag,
-            env_name=TestEnv,
+            env_name=AlphaEnv,
             network=myNet,
             simulator='traci',
             sim=sim_params,
@@ -207,7 +206,28 @@ flow_params = dict(
     
     
 # Run experiment
-from flow.core.experiment_new import Experiment
-exp = Experiment(flow_params)
-_ = exp.run(1, convert_to_csv=True)
- 
+from flow.utils.registry import make_create_env
+from flow.utils.rllib import FlowParamsEncoder
+
+create_env, gym_name = make_create_env(params=flow_params, version=0)
+try:
+    env = create_env()
+    print(f"Environment created successfully: {type(env)}")
+except Exception as e:
+    print(f"Direct call failed: {e}")
+    try:
+        env = create_env(flow_params)
+        print(f"Environment created with params: {type(env)}")
+    except Exception as e2:
+        print(f"Call with params failed: {e2}")
+        print(f"create_env type: {type(create_env)}")
+        print(f"create_env: {create_env}")
+        raise Exception("Could not create environment")
+
+episodes = 100
+for _ in range(episodes):
+    obs, info = env.reset()
+    done = False 
+
+    while not done:
+        obs,_,_,_,_ = env.step([])
