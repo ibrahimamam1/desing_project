@@ -31,32 +31,12 @@ class AllStraghtNetwork(Network):
     #Routes with Stotastics
     def specify_routes(self, net_params):
         rts = {
-
-            "E#T-X": [
-                (["E#T-X", "E#X-D"], 1),  # 100% Straight Move
-                (["E#T-X", "E#X-L"], 0),
-                (["E#T-X", "E#X-R"], 0),  
-            ],
-            "E#D-X": [
-                (["E#D-X", "E#X-T"], 1),  # 100% Straight Move
-                (["E#D-X", "E#X-R"], 0), 
-                (["E#D-X", "E#X-L"], 0), 
-            ],
-            "E#L-X": [
-                (["E#L-X", "E#X-R"], 1),  # 100% Straight Move
-                (["E#L-X", "E#X-D"], 0),  
-                (["E#L-X", "E#X-T"], 0),  
-            ],
-
-            "E#R-X": [
-                (["E#R-X", "E#X-L"], 1),  # 100% Straight Move
-                (["E#R-X", "E#X-T"], 0),  
-                (["E#R-X", "E#X-D"], 0),
-            ],
+            "E#T-X": ["E#T-X", "E#X-D"],  # 100% Straight Move
+            "E#D-X": ["E#D-X", "E#X-T"],  # 100% Straight Move
+            "E#L-X": ["E#L-X", "E#X-R"],  # 100% Straight Move
+            "E#R-X": ["E#R-X", "E#X-L"],  # 100% Straight Move
         }
-
         return rts
-
 
     def _vehicle_type_custom(filename):
         """Import vehicle type data from a *.add.xml file.
