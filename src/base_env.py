@@ -45,7 +45,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
                  simulator='traci',
                  scenario=None,
                  render_mode=None,
-                 telemetry_file="simulation_telemetry.csv"  # <--- CSV File Path
+                 output_file="simulation_telemetry.csv"  # <--- CSV File Path
                  ):
         
         # Initialize Ray MultiAgentEnv
@@ -76,7 +76,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         self.simulator = simulator
 
         # --- TELEMETRY SETUP ---
-        self.telemetry_file = telemetry_file
+        self.telemetry_file = output_file
         
         # Check/Create CSV header
         if not os.path.exists(self.telemetry_file):
