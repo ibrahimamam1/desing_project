@@ -27,7 +27,7 @@ tau = 0.8
 period = 0.5
 speed_mode = "all_check"
 
-horizon = 3600
+horizon = 1800 # 30 minutes
 sim_step = 0.5
 number_of_sim_steps_per_RlAction_step = 1
 
@@ -70,7 +70,7 @@ sim_params = SumoParams(
     sim_step=sim_step,
     lateral_resolution=None,
     no_step_log=True,
-    render=False, 
+    render=True, 
     save_render=False,
     sight_radius=25,
     show_radius=False,
@@ -99,29 +99,29 @@ car_follow_params = SumoCarFollowingParams(
 
 ### Scenarios and their network file names 
 scenarios = {
+    "rbl_stop": "50m_right_before_left.net.xml",
     "fixed_tl": "50m_fixed_tl.net.xml",
     "adaptive_tl": "50m_adaptive_tl.net.xml",
-    "rbl_stop": "50m_right_before_left.net.xml",
     "rbl_": "50m_right_before_left.net.xml",
 }
 
 ### INTENTIONS
 intentions = {
-    "assymetric_random": AsymmetricRandomNetwork,
+    "uniform_random": UniformRandomNetwork,
     "all_straight": AllStraghtNetwork,
     "all_left": AllLeftNetwork,
-    "uniform_random": UniformRandomNetwork,
+    "assymetric_random": AsymmetricRandomNetwork,
 }
 
 ### Traffic rates
-high_rate = 200
+high_rate = 500
 medium_rate = 300
-low_rate = 400
+low_rate = 150
 
 traffic_rates = {
     "Sc1_All_low" : [{"N": low_rate, "S": low_rate, "W": low_rate, "E": low_rate}],
-    "Sc2_All_high" : [{"N": high_rate, "S": high_rate, "W": high_rate, "E": high_rate}],
     "Sc3_All_medium": [{"N": medium_rate, "S": medium_rate, "W": medium_rate, "E": medium_rate}], 
+    "Sc2_All_high" : [{"N": high_rate, "S": high_rate, "W": high_rate, "E": high_rate}],
     "Sc4_Mixed_2H": [ 
                     {"N": high_rate, "S": high_rate, "W": low_rate, "E": low_rate},
                     {"N": low_rate, "S": low_rate, "W": high_rate, "E": high_rate},
@@ -162,8 +162,7 @@ traffic_rates = {
                 ]
 }
 
-n_sims_per_scenario = 500
-
+n_sims_per_scenario = 12 #Total of 6 hours per scenario 
 for scen_key, net_file in scenarios.items():
     for int_key, int_class in intentions.items():
         for rate_key, rate_list in traffic_rates.items():
