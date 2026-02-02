@@ -16,7 +16,7 @@ class AlphaEnv(Env_N):
     Multi-Agent Alpha environment.
     """
 
-    def __init__(self, env_params, sim_params, network, simulator='traci', output_file="simulation_telemetry.csv"):
+    def __init__(self, env_params, sim_params, network, simulator='traci'):
         # variables used to sort vehicles by their initial position plus
         # distance traveled
         self.prev_pos = dict()
@@ -27,7 +27,7 @@ class AlphaEnv(Env_N):
         # Define how many features we track per vehicle (Speed, x, y, angle, intention)
         self.num_obs_features = 5 
         
-        super().__init__(env_params, sim_params, network, simulator, output_file=output_file)
+        super().__init__(env_params, sim_params, network, simulator)
         
         #Defining action space
         self.action_space = gym.spaces.Box(

@@ -11,7 +11,6 @@ import numpy as np
 import random
 import shutil
 import subprocess
-import csv
 from flow.renderer.pyglet_renderer import PygletRenderer as Renderer
 from flow.utils.flow_warnings import deprecated_attribute
 
@@ -44,8 +43,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
                  network=None,
                  simulator='traci',
                  scenario=None,
-                 render_mode=None,
-                 output_file="simulation_telemetry.csv"  # <--- CSV File Path
+                 render_mode=None
                  ):
         
         # Initialize Ray MultiAgentEnv
@@ -74,28 +72,6 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
 
         self.sim_step = sim_params.sim_step
         self.simulator = simulator
-
-        # --- TELEMETRY SETUP ---
-        self.telemetry_file = output_file
-        
-        # Check/Create CSV header
-        if not os.path.exists(self.telemetry_file):
-            with open(self.telemetry_file, mode='w', newline='') as f:
-                writer = csv.writer(f)
-                header = [
-                    "episode_duration", 
-                    "number_of_vehicles_left_succesfully",
-                    "number_of_collisions",
-                    "min_travel_time", 
-                    "max_travel_time", 
-                    "avg_travel_time", 
-                    "total_travel_time",             
-                    "min_time_in_control_zone", 
-                    "max_time_in_control_zone", 
-                    "avg_time_in_control_zone", 
-                    "total_time_in_control_zone"
-                ]
-                writer.writerow(header)
 
         # Telemetry Accumulators
         self.telemetry = None 
@@ -199,44 +175,44 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
              
     
     def _update_telemetry_step(self):
-            """
-            Updates internal accumulators. 
-            Uses get_ids() (all active vehicles) to robustly detect entries.
-            """
-            current_time = self.time_counter
-            
-            # Get all vehicles currently in the network
-            current_ids = self.k.vehicle.get_ids()
-
-            # 1. Track Entries
-            # If we see a vehicle ID we haven't seen before, mark it as entered now.
-            for veh_id in current_ids:
-                if veh_id not in self.telemetry["entry_times"]:
-                    self.telemetry["entry_times"][veh_id] = current_time
-                    self.telemetry["zone_durations"][veh_id] = 0.0
-
-                # 2. Track Control Zone Time 
-                if self._is_in_control_zone(veh_id):
-                    self.telemetry["zone_durations"][veh_id] += self.sim_step
-
-            # 3. Track Successful Exits
-            # get_arrived_ids returns vehicles that reached their destination (not crashed)
-            newly_arrived = self.k.vehicle.get_arrived_ids()
-            for veh_id in newly_arrived:
-                if veh_id in self.telemetry["entry_times"]:
-                    duration = current_time - self.telemetry["entry_times"][veh_id]
-                    self.telemetry["travel_times"].append(duration)
-                    # Cleanup
-                    del self.telemetry["entry_times"][veh_id]
-
-            # 4. Track Collisions
-            n_colliding = self.k.kernel_api.simulation.getCollidingVehiclesNumber()
-            if n_colliding > 0:
-                self.telemetry["collisions"] += n_colliding
-
-    def _finalize_and_write_telemetry(self):
         """
-        Calculates aggregates and writes ONE row to the CSV.
+        Updates internal accumulators. 
+        Uses get_ids() (all active vehicles) to robustly detect entries.
+        """
+        current_time = self.time_counter
+        
+        # Get all vehicles currently in the network
+        current_ids = self.k.vehicle.get_ids()
+
+        # 1. Track Entries
+        # If we see a vehicle ID we haven't seen before, mark it as entered now.
+        for veh_id in current_ids:
+            if veh_id not in self.telemetry["entry_times"]:
+                self.telemetry["entry_times"][veh_id] = current_time
+                self.telemetry["zone_durations"][veh_id] = 0.0
+
+            # 2. Track Control Zone Time 
+            if self._is_in_control_zone(veh_id):
+                self.telemetry["zone_durations"][veh_id] += self.sim_step
+
+        # 3. Track Successful Exits
+        # get_arrived_ids returns vehicles that reached their destination (not crashed)
+        newly_arrived = self.k.vehicle.get_arrived_ids()
+        for veh_id in newly_arrived:
+            if veh_id in self.telemetry["entry_times"]:
+                duration = current_time - self.telemetry["entry_times"][veh_id]
+                self.telemetry["travel_times"].append(duration)
+                # Cleanup
+                del self.telemetry["entry_times"][veh_id]
+
+        # 4. Track Collisions
+        n_colliding = self.k.kernel_api.simulation.getCollidingVehiclesNumber()
+        if n_colliding > 0:
+            self.telemetry["collisions"] += n_colliding
+
+    def _compute_telemetry_stats(self):
+        """
+        Calculates aggregates and returns them as a dictionary.
         Called only when terminated is True.
         """
         travel_times = self.telemetry["travel_times"]
@@ -262,28 +238,19 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         else:
             min_zone = max_zone = total_zone = avg_zone = 0
 
-        row = [
-            self.time_counter,      # Episode Duration
-            num_completed,          # Emitted/Successful Exits (Constraint 1)
-            self.telemetry["collisions"],
-            min_tt, 
-            max_tt, 
-            avg_tt, 
-            total_tt,
-            min_zone, 
-            max_zone, 
-            avg_zone, 
-            total_zone
-        ]
-
-        # --- Write Single Row
-        try:
-            with open(self.telemetry_file, mode='a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(row)
-        except Exception as e:
-            print(f"{RED}Error writing telemetry: {e}{RESET}")
-
+        return {
+            "episode_duration": self.time_counter,
+            "number_of_vehicles_left_successfully": num_completed,
+            "number_of_collisions": self.telemetry["collisions"],
+            "min_travel_time": min_tt,
+            "max_travel_time": max_tt,
+            "avg_travel_time": avg_tt,
+            "total_travel_time": total_tt,
+            "min_time_in_control_zone": min_zone,
+            "max_time_in_control_zone": max_zone,
+            "avg_time_in_control_zone": avg_zone,
+            "total_time_in_control_zone": total_zone
+        }
 
     def step(self, action_dict):
         """
@@ -327,10 +294,11 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
                      (self.env_params.warmup_steps + self.env_params.horizon))
                      or crash)
         
-        # --- SAVE TELEMETRY (Once at end) ---
+        # --- COMPUTE TELEMETRY (Once at end) ---
+        telemetry_stats = None
         if terminated:
-            self._finalize_and_write_telemetry()
-        # ------------------------------------
+            telemetry_stats = self._compute_telemetry_stats()
+        # ---------------------------------------
 
         # Construct Multi-Agent Returns
         obs_dict = states if isinstance(states, dict) else {} 
@@ -350,7 +318,11 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
                 reward_dict[agent_id] = self.compute_reward(agent_id, agent_action, fail=crash, goal_reached=False)
                 infos[agent_id] = {}
 
-        return obs_dict, reward_dict, terminated, {}, {}
+        # Add telemetry to __common__ info dict if episode terminated
+        if terminated and telemetry_stats is not None:
+            infos["__common__"] = {"telemetry": telemetry_stats}
+
+        return obs_dict, reward_dict, terminated, {}, infos
 
     def _apply_non_rl_controls(self):
         """Helper to handle IDM/LaneChange controllers for non-RL vehicles."""
