@@ -191,7 +191,12 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         """
         Determines if a vehicle is in the control zone.
         """
-        return veh_id in self.k.vehicle.get_rl_ids()
+        position = self.k.vehicle.get_2d_position(veh_id)
+        in_box_x = -12 <= position[0] <= 12
+        in_box_y = -12 <= position[1] <= 12
+            
+        return in_box_x and in_box_y
+             
     
     def _update_telemetry_step(self):
             """

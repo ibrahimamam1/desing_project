@@ -1,7 +1,7 @@
 from flow.networks import Network
 import xml.etree.ElementTree as ElementTree
 from lxml import etree
-
+import random 
 #
 # default sumo probability value  TODO (ak): remove
 DEFAULT_PROBABILITY = 0
@@ -30,32 +30,137 @@ class AsymmetricRandomNetwork(Network):
 
     #Routes with Stotastics
     def specify_routes(self, net_params):
-        rts = {
-
+        rts = [
+            {
             "E#T-X": [
-                (["E#T-X", "E#X-D"], 0.34),
-                (["E#T-X", "E#X-L"], 0.34),
-                (["E#T-X", "E#X-R"], 0.32),    
+                (["E#T-X", "E#X-D"], 0.5),
+                (["E#T-X", "E#X-L"], 0.25),
+                (["E#T-X", "E#X-R"], 0.25),    
             ],
             "E#D-X": [
-                (["E#D-X", "E#X-T"], 0.34),
-                (["E#D-X", "E#X-R"], 0.34), 
-                (["E#D-X", "E#X-L"], 0.32), 
+                (["E#D-X", "E#X-T"], 0.5),
+                (["E#D-X", "E#X-R"], 0.25), 
+                (["E#D-X", "E#X-L"], 0.25), 
             ],
             "E#L-X": [
-                (["E#L-X", "E#X-R"], 0.34),  
-                (["E#L-X", "E#X-D"], 0.32),  
-                (["E#L-X", "E#X-T"], 0.34),    
+                (["E#L-X", "E#X-R"], 0.5),  
+                (["E#L-X", "E#X-D"], 0.25),  
+                (["E#L-X", "E#X-T"], 0.25),    
             ],
 
             "E#R-X": [
-                (["E#R-X", "E#X-L"], 0.34),
-                (["E#R-X", "E#X-T"], 0.32),  
-                (["E#R-X", "E#X-D"], 0.34), 
+                (["E#R-X", "E#X-L"], 0.5),
+                (["E#R-X", "E#X-T"], 0.25),  
+                (["E#R-X", "E#X-D"], 0.25), 
             ],
-        }
+            },
+            {
+            "E#T-X": [
+                (["E#T-X", "E#X-D"], 0.25),
+                (["E#T-X", "E#X-L"], 0.5),
+                (["E#T-X", "E#X-R"], 0.25),    
+            ],
+            "E#D-X": [
+                (["E#D-X", "E#X-T"], 0.25),
+                (["E#D-X", "E#X-R"], 0.5), 
+                (["E#D-X", "E#X-L"], 0.25), 
+            ],
+            "E#L-X": [
+                (["E#L-X", "E#X-R"], 0.25),  
+                (["E#L-X", "E#X-D"], 0.5),  
+                (["E#L-X", "E#X-T"], 0.25),    
+            ],
 
-        return rts
+            "E#R-X": [
+                (["E#R-X", "E#X-L"], 0.25),
+                (["E#R-X", "E#X-T"], 0.5),  
+                (["E#R-X", "E#X-D"], 0.25), 
+            ],
+            },
+            {
+            "E#T-X": [
+                (["E#T-X", "E#X-D"], 0.25),
+                (["E#T-X", "E#X-L"], 0.25),
+                (["E#T-X", "E#X-R"], 0.5),    
+            ],
+            "E#D-X": [
+                (["E#D-X", "E#X-T"], 0.25),
+                (["E#D-X", "E#X-R"], 0.25), 
+                (["E#D-X", "E#X-L"], 0.5), 
+            ],
+            "E#L-X": [
+                (["E#L-X", "E#X-R"], 0.25),  
+                (["E#L-X", "E#X-D"], 0.25),  
+                (["E#L-X", "E#X-T"], 0.5),    
+            ],
+
+            "E#R-X": [
+                (["E#R-X", "E#X-L"], 0.25),
+                (["E#R-X", "E#X-T"], 0.25),  
+                (["E#R-X", "E#X-D"], 0.5), 
+            ],
+        },
+            {
+            "E#T-X": [
+                (["E#T-X", "E#X-D"], 0.5),
+                (["E#T-X", "E#X-L"], 0.5),
+            ],
+            "E#D-X": [
+                (["E#D-X", "E#X-T"], 0.5),
+                (["E#D-X", "E#X-R"], 0.5), 
+            ],
+            "E#L-X": [
+                (["E#L-X", "E#X-R"], 0.5),  
+                (["E#L-X", "E#X-D"], 0.5),  
+            ],
+
+            "E#R-X": [
+                (["E#R-X", "E#X-L"], 0.5),
+                (["E#R-X", "E#X-T"], 0.5),  
+            ],
+        },
+            {
+            "E#T-X": [
+                (["E#T-X", "E#X-L"], 0.5),
+                (["E#T-X", "E#X-R"], 0.5),    
+            ],
+            "E#D-X": [
+                (["E#D-X", "E#X-R"], 0.5), 
+                (["E#D-X", "E#X-L"], 0.5), 
+            ],
+            "E#L-X": [
+                (["E#L-X", "E#X-D"], 0.5),  
+                (["E#L-X", "E#X-T"], 0.5),    
+            ],
+
+            "E#R-X": [
+                (["E#R-X", "E#X-T"], 0.5),  
+                (["E#R-X", "E#X-D"], 0.5), 
+            ],
+        },
+        {
+            "E#T-X": [
+                (["E#T-X", "E#X-D"], 0.5),
+                (["E#T-X", "E#X-R"], 0.5),    
+            ],
+            "E#D-X": [
+                (["E#D-X", "E#X-T"], 0.5),
+                (["E#D-X", "E#X-L"], 0.5), 
+            ],
+            "E#L-X": [
+                (["E#L-X", "E#X-R"], 0.5),  
+                (["E#L-X", "E#X-T"], 0.5),    
+            ],
+
+            "E#R-X": [
+                (["E#R-X", "E#X-L"], 0.5),
+                (["E#R-X", "E#X-D"], 0.5), 
+            ],
+        }, 
+
+               ]
+        routes = random.choice(rts)
+        return rts[1]
 
 
     def _vehicle_type_custom(filename):

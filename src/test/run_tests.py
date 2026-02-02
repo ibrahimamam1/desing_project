@@ -70,7 +70,7 @@ sim_params = SumoParams(
     sim_step=sim_step,
     lateral_resolution=None,
     no_step_log=True,
-    render=True, 
+    render=False, 
     save_render=False,
     sight_radius=25,
     show_radius=False,
@@ -107,10 +107,10 @@ scenarios = {
 
 ### INTENTIONS
 intentions = {
+    "assymetric_random": AsymmetricRandomNetwork,
     "all_straight": AllStraghtNetwork,
     "all_left": AllLeftNetwork,
     "uniform_random": UniformRandomNetwork,
-    "assymetric_random": AsymmetricRandomNetwork,
 }
 
 ### Traffic rates
