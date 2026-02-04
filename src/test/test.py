@@ -141,9 +141,6 @@ def run_sim(
             print(f"create_env: {create_env}")
             raise Exception("Could not create environment")
     
-    # Calculate expected episode duration based on horizon
-    expected_duration = env_params.sims_per_step * (env_params.warmup_steps + env_params.horizon) * sim_params.sim_step
-    
     sim_complete = False 
     max_attempts = 100  # Prevent infinite loops
     attempts = 0
@@ -162,10 +159,10 @@ def run_sim(
             telemetry = info["__common__"]["telemetry"]
             episode_duration = telemetry["episode_duration"]
             
-            duration_ratio = episode_duration / expected_duration
+            duration_ratio = episode_duration / env_params.horizon
             if duration_ratio >= 0.99:  # 99% of expected duration (accounts for floating point precision)
                 # Episode completed successfully - write to CSV
-                print(f"Episode completed successfully. Duration: {episode_duration:.2f}s (expected: {expected_duration:.2f}s)")
+                print(f"Episode completed successfully. Duration: {episode_duration:.2f}s")
                 
                 row = [
                     telemetry["episode_duration"],
@@ -192,7 +189,7 @@ def run_sim(
                     sim_complete = True  # Don't retry on file write errors
             else:
                 # Episode ended prematurely (likely due to crash)
-                print(f"Episode ended prematurely. Duration: {episode_duration:.2f}s (expected: {expected_duration:.2f}s). Retrying...")
+                print(f"Episode ended prematurely. Duration: {episode_duration:.2f}s (expected: {env_params.horizon:.2f}s). Retrying...")
                 print(f"Collisions: {telemetry['number_of_collisions']}")
         else:
             # No telemetry in info (shouldn't happen, but handle gracefully)

@@ -13,21 +13,21 @@ from flow.core.params import InitialConfig
 from flow.core.params import EnvParams
 from flow.core.params import SumoParams, SumoCarFollowingParams
 
-min_gap = 0.9
+min_gap = 2.0
 max_accel = 2.6
 max_decel = 4.5
-max_speed = 30
+max_speed = 25
 initial_speed = 0
 speed_factor = 1.0
 speed_dev = 0.0
 impatience = 0.0
 car_follow_model = "IDM"
 sigma = 0
-tau = 0.8
+tau = 1.5
 period = 0.5
-speed_mode = "all_check"
+speed_mode = 31
 
-horizon = 1800 # 30 minutes
+horizon = 3600 # 30 minutes
 sim_step = 0.5
 number_of_sim_steps_per_RlAction_step = 1
 
@@ -43,7 +43,7 @@ initial_config = InitialConfig(
     shuffle=False,
     spacing="uniform",
     min_gap=12,
-    perturbation=5.0,
+    perturbation=0,
     x0=5,
     bunching=0,
     lanes_distribution=float("inf"),
@@ -70,7 +70,7 @@ sim_params = SumoParams(
     sim_step=sim_step,
     lateral_resolution=None,
     no_step_log=True,
-    render=True, 
+    render=False, 
     save_render=False,
     sight_radius=25,
     show_radius=False,
@@ -78,8 +78,8 @@ sim_params = SumoParams(
     force_color_update=False,
     overtake_right=False,
     seed=42,
-    restart_instance=True,
-    print_warnings=True,
+    restart_instance=False,
+    print_warnings=False,
     teleport_time=teleport_time,
     num_clients=1,  
     color_by_speed=False,
@@ -99,17 +99,16 @@ car_follow_params = SumoCarFollowingParams(
 
 ### Scenarios and their network file names 
 scenarios = {
-    "rbl_stop": "50m_right_before_left.net.xml",
+    "rbl": "50m_right_before_left.net.xml",
     "fixed_tl": "50m_fixed_tl.net.xml",
     "adaptive_tl": "50m_adaptive_tl.net.xml",
-    "rbl_": "50m_right_before_left.net.xml",
 }
 
 ### INTENTIONS
 intentions = {
-    "uniform_random": UniformRandomNetwork,
     "all_straight": AllStraghtNetwork,
     "all_left": AllLeftNetwork,
+    "uniform_random": UniformRandomNetwork,
     "assymetric_random": AsymmetricRandomNetwork,
 }
 
@@ -185,3 +184,15 @@ for scen_key, net_file in scenarios.items():
                 )
                 
                 print(f"--- Finished Run {i} ---")
+
+
+run_sim(
+    'test',       # Name for output file 
+    '50m_fixed_tl.net.xml',         # The .net.xml file
+    AllLeftNetwork,        # The intention Network class 
+    {"N": low_rate, "S": low_rate, "W": low_rate, "E": low_rate},      # The flow dictionary
+    deepcopy(initial_config),
+    deepcopy(car_follow_params),
+    deepcopy(sim_params),
+    deepcopy(env_params)
+)
