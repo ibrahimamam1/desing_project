@@ -1,0 +1,50 @@
+Failure # 1 (occurred at 2026-02-11_08-26-30)
+[36mray::PPO.train()[39m (pid=8789, ip=192.168.0.105, actor_id=e9a33b731518ab9f1c9ff40a01000000, repr=PPO)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/tune/trainable/trainable.py", line 400, in train
+    raise skipped from exception_cause(skipped)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/tune/trainable/trainable.py", line 397, in train
+    result = self.step()
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/algorithms/algorithm.py", line 853, in step
+    results, train_iter_ctx = self._run_one_training_iteration()
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/algorithms/algorithm.py", line 2838, in _run_one_training_iteration
+    results = self.training_step()
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/algorithms/ppo/ppo.py", line 430, in training_step
+    worker_set=self.workers, max_env_steps=self.config.train_batch_size
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/execution/rollout_ops.py", line 86, in synchronous_parallel_sample
+    lambda w: w.sample(), local_worker=False, healthy_only=True
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/evaluation/worker_set.py", line 680, in foreach_worker
+    handle_remote_call_result_errors(remote_results, self._ignore_worker_failures)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/evaluation/worker_set.py", line 76, in handle_remote_call_result_errors
+    raise r.get()
+ray.exceptions.RayTaskError(ValueError): [36mray::RolloutWorker.apply()[39m (pid=8850, ip=192.168.0.105, actor_id=908f822931133049c615c27001000000, repr=<ray.rllib.evaluation.rollout_worker.RolloutWorker object at 0x7f52cc020080>)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/utils/actor_manager.py", line 185, in apply
+    raise e
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/utils/actor_manager.py", line 176, in apply
+    return func(self, *args, **kwargs)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/execution/rollout_ops.py", line 86, in <lambda>
+    lambda w: w.sample(), local_worker=False, healthy_only=True
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/evaluation/rollout_worker.py", line 696, in sample
+    batches = [self.input_reader.next()]
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/evaluation/sampler.py", line 92, in next
+    batches = [self.get_data()]
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/evaluation/sampler.py", line 277, in get_data
+    item = next(self._env_runner)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/evaluation/env_runner_v2.py", line 344, in run
+    outputs = self.step()
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/evaluation/env_runner_v2.py", line 375, in step
+    infos=infos,
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/evaluation/env_runner_v2.py", line 637, in _process_observations
+    processed = policy.agent_connectors(acd_list)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/connectors/agent/pipeline.py", line 41, in __call__
+    ret = c(ret)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/connectors/connector.py", line 265, in __call__
+    return [self.transform(d) for d in acd_list]
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/connectors/connector.py", line 265, in <listcomp>
+    return [self.transform(d) for d in acd_list]
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/connectors/agent/obs_preproc.py", line 59, in transform
+    d[SampleBatch.NEXT_OBS]
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/models/preprocessors.py", line 206, in transform
+    self.check_shape(observation)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/models/preprocessors.py", line 80, in check_shape
+    self._obs_space,
+ValueError: Observation ([] dtype=float32) outside given space (Box(-inf, inf, (30,), float32))!

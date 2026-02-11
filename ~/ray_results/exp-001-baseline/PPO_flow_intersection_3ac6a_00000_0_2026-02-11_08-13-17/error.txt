@@ -1,0 +1,54 @@
+Failure # 1 (occurred at 2026-02-11_08-13-24)
+The actor died because of an error raised in its creation task, [36mray::PPO.__init__()[39m (pid=5328, ip=192.168.0.105, actor_id=80e89927756c8237ed7e118d01000000, repr=PPO)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/evaluation/worker_set.py", line 229, in _setup
+    validate=config.validate_workers_after_construction,
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/evaluation/worker_set.py", line 593, in add_workers
+    raise result.get()
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/utils/actor_manager.py", line 481, in __fetch_result
+    result = ray.get(r)
+ray.exceptions.RayActorError: The actor died because of an error raised in its creation task, [36mray::RolloutWorker.__init__()[39m (pid=5387, ip=192.168.0.105, actor_id=4276466517a902858c6ac37f01000000, repr=<ray.rllib.evaluation.rollout_worker.RolloutWorker object at 0x7fbaa19a2278>)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/utils/pre_checks/env.py", line 377, in check_multiagent_environments
+    _check_if_element_multi_agent_dict(env, done, "step, done")
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/utils/pre_checks/env.py", line 762, in _check_if_element_multi_agent_dict
+    raise ValueError(error)
+ValueError: The element returned by step, done is not a MultiAgentDict. Instead, it is of type:  <class 'bool'>
+
+During handling of the above exception, another exception occurred:
+
+[36mray::RolloutWorker.__init__()[39m (pid=5387, ip=192.168.0.105, actor_id=4276466517a902858c6ac37f01000000, repr=<ray.rllib.evaluation.rollout_worker.RolloutWorker object at 0x7fbaa19a2278>)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/evaluation/rollout_worker.py", line 404, in __init__
+    check_env(self.env, self.config)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/utils/pre_checks/env.py", line 97, in check_env
+    f"{actual_error}\n"
+ValueError: Traceback (most recent call last):
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/utils/pre_checks/env.py", line 81, in check_env
+    check_multiagent_environments(env)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/utils/pre_checks/env.py", line 377, in check_multiagent_environments
+    _check_if_element_multi_agent_dict(env, done, "step, done")
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/utils/pre_checks/env.py", line 762, in _check_if_element_multi_agent_dict
+    raise ValueError(error)
+ValueError: The element returned by step, done is not a MultiAgentDict. Instead, it is of type:  <class 'bool'>
+
+The above error has been found in your environment! We've added a module for checking your custom environments. It may cause your experiment to fail if your environment is not set up correctly. You can disable this behavior via calling `config.environment(disable_env_checking=True)`. You can run the environment checking module standalone by calling ray.rllib.utils.check_env([your env]).
+
+During handling of the above exception, another exception occurred:
+
+[36mray::PPO.__init__()[39m (pid=5328, ip=192.168.0.105, actor_id=80e89927756c8237ed7e118d01000000, repr=PPO)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/algorithms/algorithm.py", line 520, in __init__
+    **kwargs,
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/tune/trainable/trainable.py", line 185, in __init__
+    self.setup(copy.deepcopy(self.config))
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/algorithms/algorithm.py", line 646, in setup
+    logdir=self.logdir,
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/evaluation/worker_set.py", line 179, in __init__
+    raise e.args[0].args[2]
+ValueError: Traceback (most recent call last):
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/utils/pre_checks/env.py", line 81, in check_env
+    check_multiagent_environments(env)
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/utils/pre_checks/env.py", line 377, in check_multiagent_environments
+    _check_if_element_multi_agent_dict(env, done, "step, done")
+  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/utils/pre_checks/env.py", line 762, in _check_if_element_multi_agent_dict
+    raise ValueError(error)
+ValueError: The element returned by step, done is not a MultiAgentDict. Instead, it is of type:  <class 'bool'>
+
+The above error has been found in your environment! We've added a module for checking your custom environments. It may cause your experiment to fail if your environment is not set up correctly. You can disable this behavior via calling `config.environment(disable_env_checking=True)`. You can run the environment checking module standalone by calling ray.rllib.utils.check_env([your env]).
