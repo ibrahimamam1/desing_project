@@ -1,6 +1,8 @@
 import sys 
 import os 
 import random
+import psutil
+import signal
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from networks.all_straight import AllStraghtNetwork
@@ -12,6 +14,15 @@ from copy import deepcopy
 from flow.core.params import InitialConfig
 from flow.core.params import EnvParams
 from flow.core.params import SumoParams, SumoCarFollowingParams
+
+def kill_sumo_processes():
+    """Force kill all SUMO processes"""
+    for proc in psutil.process_iter(['name']):
+        try:
+            if 'sumo' in proc.info['name'].lower():
+                proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
 
 min_gap = 2.0
 max_accel = 2.6
@@ -27,7 +38,7 @@ tau = 1.5
 period = 0.5
 speed_mode = 31
 
-horizon = 3600 # 30 minutes
+horizon = 1200 # 10 minutes
 sim_step = 0.5
 number_of_sim_steps_per_RlAction_step = 1
 
@@ -78,7 +89,7 @@ sim_params = SumoParams(
     force_color_update=False,
     overtake_right=False,
     seed=42,
-    restart_instance=False,
+    restart_instance=True,
     print_warnings=False,
     teleport_time=teleport_time,
     num_clients=1,  
@@ -99,9 +110,10 @@ car_follow_params = SumoCarFollowingParams(
 
 ### Scenarios and their network file names 
 scenarios = {
-    "rbl": "50m_right_before_left.net.xml",
-    "fixed_tl": "50m_fixed_tl.net.xml",
-    "adaptive_tl": "50m_adaptive_tl.net.xml",
+    "FTL10": "100m_fixed_tl10.net.xml",
+    "FTL20": "100m_fixed_tl20.net.xml",
+    "FTL30": "100m_fixed_tl30.net.xml",
+    "FTL40": "100m_fixed_tl40.net.xml",
 }
 
 ### INTENTIONS
@@ -120,7 +132,16 @@ low_rate = 150
 traffic_rates = {
     "Sc1_All_low" : [{"N": low_rate, "S": low_rate, "W": low_rate, "E": low_rate}],
     "Sc3_All_medium": [{"N": medium_rate, "S": medium_rate, "W": medium_rate, "E": medium_rate}], 
-    "Sc2_All_high" : [{"N": high_rate, "S": high_rate, "W": high_rate, "E": high_rate}],
+    "Sc2_All_high_3H" : [{"N": high_rate, "S": high_rate, "W": high_rate, "E": high_rate},
+                      {"N": high_rate, "S": high_rate, "W": high_rate, "E": medium_rate},
+                      {"N": high_rate, "S": high_rate, "W": medium_rate, "E": high_rate},
+                      {"N": high_rate, "S": medium_rate, "W": high_rate, "E": high_rate},
+                      {"N": medium_rate, "S": high_rate, "W": high_rate, "E": high_rate},
+                      {"N": high_rate, "S": high_rate, "W": high_rate, "E": low_rate},
+                      {"N": high_rate, "S": high_rate, "W": low_rate, "E": high_rate},
+                      {"N": high_rate, "S": low_rate, "W": high_rate, "E": high_rate},
+                      {"N": low_rate, "S": high_rate, "W": high_rate, "E": high_rate},
+                    ],
     "Sc4_Mixed_2H": [ 
                     {"N": high_rate, "S": high_rate, "W": low_rate, "E": low_rate},
                     {"N": low_rate, "S": low_rate, "W": high_rate, "E": high_rate},
@@ -149,29 +170,30 @@ traffic_rates = {
                     {"N": low_rate, "S": low_rate, "W": medium_rate, "E": medium_rate},
                     {"N": medium_rate, "S": low_rate, "W": low_rate, "E": low_rate},
                 ],
-  "Sc7_Mixed_3H": [ 
-                    {"N": high_rate, "S": high_rate, "W": high_rate, "E": medium_rate},
-                    {"N": high_rate, "S": high_rate, "W": medium_rate, "E": high_rate},
-                    {"N": high_rate, "S": medium_rate, "W": high_rate, "E": high_rate},
-                    {"N": medium_rate, "S": high_rate, "W": high_rate, "E": high_rate},
-                    {"N": high_rate, "S": high_rate, "W": high_rate, "E": low_rate},
-                    {"N": high_rate, "S": high_rate, "W": low_rate, "E": high_rate},
-                    {"N": high_rate, "S": low_rate, "W": high_rate, "E": high_rate},
-                    {"N": low_rate, "S": high_rate, "W": high_rate, "E": high_rate},
-                ]
 }
+#run_sim(
+#                   'test',       # Name for output file 
+#                    '100m_right_before_left.net.xml',         # The .net.xml file
+#                    UniformRandomNetwork,        # The intention Network class 
+#                    {"N": low_rate, "S": low_rate, "W": low_rate, "E": low_rate}, 
+#                    deepcopy(initial_config),
+#                    deepcopy(car_follow_params),
+#                    deepcopy(sim_params),
+#                    deepcopy(env_params)
+#                )
+#
 
-n_sims_per_scenario = 12 #Total of 6 hours per scenario 
+n_sims_per_scenario = 42 #Total of 7 hours per scenario 
 for scen_key, net_file in scenarios.items():
     for int_key, int_class in intentions.items():
         for rate_key, rate_list in traffic_rates.items():
-            
+           
             group_name = f"{scen_key}_{int_key}_{rate_key}"
             for i in range(n_sims_per_scenario):
-                # 1. Randomly pick one flow configuration from the list
+               # 1. Randomly pick one flow configuration from the list
                 current_flow = random.choice(rate_list)
                 print(f"--- Starting: {group_name} Run {i} ---")
-                
+               
                 run_sim(
                     group_name,       # Name for output file 
                     net_file,         # The .net.xml file
@@ -182,17 +204,8 @@ for scen_key, net_file in scenarios.items():
                     deepcopy(sim_params),
                     deepcopy(env_params)
                 )
-                
+                kill_sumo_processes()                 
                 print(f"--- Finished Run {i} ---")
 
-
-run_sim(
-    'test',       # Name for output file 
-    '50m_fixed_tl.net.xml',         # The .net.xml file
-    AllLeftNetwork,        # The intention Network class 
-    {"N": low_rate, "S": low_rate, "W": low_rate, "E": low_rate},      # The flow dictionary
-    deepcopy(initial_config),
-    deepcopy(car_follow_params),
-    deepcopy(sim_params),
-    deepcopy(env_params)
-)
+from plot2 import main
+main()
