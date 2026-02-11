@@ -201,23 +201,24 @@ class AlphaEnv(Env_N):
             self.k.vehicle.apply_acceleration(ids_to_apply, actions_to_apply)
 
     def compute_reward(self, veh_id, rl_action, **kwargs):
-        """
-        Compute the reward for a specific agent.
-        """
-        # Basic penalty for time step
-        reward = -0.1
+        reward = 0
         
-        # Collision penalty
+        # 1. Collision is the ultimate failure
         if kwargs.get("fail", False):
-            reward -= 100
+            return -50.0 
+
+        # 2. Encourage speed (Progress toward goal)
+        # We want them to move at the target/max speed
+        max_speed = self.k.network.max_speed()
+        v_ego = self.k.vehicle.get_speed(veh_id)
         
-        # Goal reached reward
-        # sorted_ids implies active vehicles. If not in there, it left the system successfully.
-        sorted_ids = self.sorted_ids
-        if veh_id not in sorted_ids:
-            # print("Vehicle reached goal, giving reward")
-            reward += 10
-            
+        # Simple linear reward for speed (normalized 0 to 1)
+        reward += (v_ego / max_speed) * 0.5 
+
+        # 3. Small penalty for excessive braking (improves traffic flow)
+        if rl_action < 0:
+            reward -= 0.05 * abs(rl_action)
+
         return reward
 
     def additional_command(self):
