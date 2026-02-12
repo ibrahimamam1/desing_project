@@ -275,8 +275,9 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             print('Crash Occured')
         # Global Truncation (Time limit reached)
         time_limit_reached = (self.time_counter >= (self.env_params.sims_per_step * (self.env_params.warmup_steps + self.env_params.horizon)))
-        
-        truncated = time_limit_reached
+       
+        vehicles_left = len(new_sorted_ids)
+        truncated = time_limit_reached or vehicles_left == 0 or crash
         terminated = crash 
         
         # Construct Multi-Agent Returns
@@ -312,7 +313,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         
         # Add __all__ to indicate if entire episode is done
         # Usually true if crash or time limit
-        done_dict["__all__"] = terminated
+        done_dict["__all__"] = terminated or truncated
         truncated_dict["__all__"] = truncated
         
         # --- COMPUTE TELEMETRY (Once at end) ---
