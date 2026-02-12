@@ -38,7 +38,7 @@ period = 0.5
 
 max_vehicle_count_in_inflow = 20
 num_inflows_vehicles = random.randint(1, max_vehicle_count_in_inflow)
-num_rl_vehicles = 8
+num_rl_vehicles = 1
 num_non_rl_vehicles = 0
 
 vehicles = VehicleParams()
@@ -347,19 +347,8 @@ print("  - Added KL penalty and value function clipping")
 print("  - Increased batch size for stability")
 print("")
 
-for i in range(50):
+for i in range(100):
     result = algo.train()
-    
-    reward_mean = result.get('episode_reward_mean', 0)
-    len_mean = result.get('episode_len_mean', 0)
-    
-    # Get additional metrics for debugging
-    policy_loss = result.get('info', {}).get('learner', {}).get('shared_policy', {}).get('learner_stats', {}).get('policy_loss', 0)
-    vf_loss = result.get('info', {}).get('learner', {}).get('shared_policy', {}).get('learner_stats', {}).get('vf_loss', 0)
-    kl = result.get('info', {}).get('learner', {}).get('shared_policy', {}).get('learner_stats', {}).get('kl', 0)
-    
-    print(f"Iter {i:3d} | R: {reward_mean:7.2f} | Len: {len_mean:5.1f} | PL: {policy_loss:7.3f} | VL: {vf_loss:7.3f} | KL: {kl:6.4f}")
-    
     # Save checkpoint every 10 iterations
     if i % 10 == 0 or i == 199:
         save_dir = algo.save(checkpoint_dir=CHECKPOINT_ROOT)
