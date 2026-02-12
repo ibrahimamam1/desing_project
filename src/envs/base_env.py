@@ -41,7 +41,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         
         # Initialize Ray MultiAgentEnv
         super().__init__()
-        self._agent_ids = {"RL_0"} #required by RLLib
+        self._agent_ids = {"RL_0"} 
         
         self.env_params = env_params
         if scenario is not None:
@@ -237,7 +237,6 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
        
         self.apply_rl_actions(action_dict) 
         
-        # Optional: Define this method if used, or remove call if unnecessary
         if hasattr(self, "additional_command"):
             self.additional_command()
         
@@ -247,9 +246,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             self.step_counter += 1
             self.step_counter_within_rl_step = inner_step
             
-            # Optional check
-            if hasattr(self, "_apply_non_rl_controls"):
-                self._apply_non_rl_controls()
+            self._apply_non_rl_controls()
                 
             # Advance Simulator
             self.k.simulation.simulation_step()
@@ -264,7 +261,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
                 self.k.vehicle.update_vehicle_colors()
        
         new_sorted_ids = set(self.sorted_ids)
-        # Agents that existed before but not now (they left the system)
+        # Agents that existed before but left the system
         agents_that_left = sorted_ids - new_sorted_ids
         
         # 3. Retrieve Observations
@@ -277,8 +274,8 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         time_limit_reached = (self.time_counter >= (self.env_params.sims_per_step * (self.env_params.warmup_steps + self.env_params.horizon)))
        
         vehicles_left = len(new_sorted_ids)
-        truncated = time_limit_reached or vehicles_left == 0 or crash
-        terminated = crash 
+        truncated = time_limit_reached
+        terminated = crash or vehicles_left == 0 
         
         # Construct Multi-Agent Returns
         obs_dict = states if isinstance(states, dict) else {} 
@@ -291,7 +288,6 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         for agent_id in agents_that_left:
             reward_dict[agent_id] = self.compute_reward(
                 agent_id, 
-                action_dict.get(agent_id), 
                 fail=crash, 
                 goal_reached=True
             )
@@ -300,10 +296,8 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         
         # Handle active agents
         for agent_id in obs_dict.keys():
-            agent_action = action_dict.get(agent_id) 
             reward_dict[agent_id] = self.compute_reward(
                 agent_id, 
-                agent_action, 
                 fail=crash, 
                 goal_reached=False
             )
@@ -312,18 +306,20 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             infos[agent_id] = {}
         
         # Add __all__ to indicate if entire episode is done
-        # Usually true if crash or time limit
         done_dict["__all__"] = terminated or truncated
         truncated_dict["__all__"] = truncated
         
-        # --- COMPUTE TELEMETRY (Once at end) ---
+        # --- COMPUTE TELEMETRY ---
         telemetry_stats = None
         if (terminated or truncated) and hasattr(self, "_compute_telemetry_stats"):
             telemetry_stats = self._compute_telemetry_stats()
 
         if telemetry_stats is not None:
             infos["__common__"] = {"telemetry": telemetry_stats}
-         
+        
+        print(f"obs = {obs_dict}")
+        print(f"actions = {action_dict}")
+        print(f"reward = {reward_dict}")
         return obs_dict, reward_dict, done_dict, truncated_dict, infos
 
     def _apply_non_rl_controls(self):

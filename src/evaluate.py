@@ -44,7 +44,7 @@ period = 0.5
 
 max_vehicle_count_in_inflow = 20
 num_inflows_vehicles = random.randint(1, max_vehicle_count_in_inflow)  # 1
-num_rl_vehicles = 8
+num_rl_vehicles = 1
 num_non_rl_vehicles = 0
 
 vehicles = VehicleParams()
