@@ -1,9 +1,0 @@
-Failure # 1 (occurred at 2026-02-11_07-59-00)
-The actor died because of an error raised in its creation task, [36mray::PPO.__init__()[39m (pid=3033, ip=192.168.0.105, actor_id=88858a987e5bd928f68dc61401000000, repr=PPO)
-  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/algorithms/algorithm.py", line 444, in __init__
-    config.env, config
-  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/rllib/algorithms/algorithm.py", line 2289, in _get_env_id_and_creator
-    return env_specifier, _global_registry.get(ENV_CREATOR, env_specifier)
-  File "/home/rgb/miniconda3/envs/flow/lib/python3.7/site-packages/ray/tune/registry.py", line 270, in get
-    return pickle.loads(value)
-ModuleNotFoundError: No module named 'envs'
