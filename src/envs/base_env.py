@@ -276,7 +276,8 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         vehicles_left = len(new_sorted_ids)
         truncated = time_limit_reached
         terminated = crash or vehicles_left == 0 
-        
+        if vehicles_left == 0:
+            print('rl 0 left the sim')
         # Construct Multi-Agent Returns
         obs_dict = states if isinstance(states, dict) else {} 
         reward_dict = {}

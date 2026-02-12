@@ -89,10 +89,16 @@ class AlphaEnv(Env_N):
                 ego_path = 0.0
            
             # Distance traveled
+            route = self.k.vehicle.get_route(ego_id)
+            total_route_length = sum([self.k.network.edge_length(edge) for edge in route])
+
+            # Get cumulative distance traveled
             ego_dis = self.k.vehicle.get_distance(ego_id)
-           
+
+            # Normalize: 0.0 (start) to 1.0 (end of route)
+            ego_dis_norm = ego_dis / total_route_length if total_route_length > 0 else 0.0            
             # Start the vector
-            obs_vector = [ego_speed, ego_accel, ego_dis, ego_path]
+            obs_vector = [ego_speed, ego_accel, ego_dis_norm, ego_path]
             return np.array(obs_vector, dtype=np.float32)
             
         except Exception as e:
