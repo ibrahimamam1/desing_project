@@ -41,7 +41,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         
         # Initialize Ray MultiAgentEnv
         super().__init__()
-        self._agent_ids = {"RL_0"} 
+        self._agent_ids = {"RL_0", "RL_1", "RL_2", "RL_3"} 
         
         self.env_params = env_params
         if scenario is not None:
@@ -163,7 +163,9 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             "entry_times": {},      # {veh_id: float (time_step)}
             "travel_times": {},     # {veh_id: duration} (Only successful vehicles)
             "zone_durations": {},   # {veh_id: float} (All vehicles seen)
-            "collisions": 0         # int
+            "collisions": 0,
+            "speeds": [],        
+            "accelerations": []
         }
 
     def _update_telemetry_step(self):
@@ -186,6 +188,14 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             if self._is_in_control_zone(veh_id):
                 self.telemetry["zone_durations"][veh_id] += self.sim_step
 
+            speed = self.k.vehicle.get_speed(veh_id)
+            accel = self.k.vehicle.get_accel(veh_id)
+        
+            if speed is not None : # Avoid invalid values during crashes/teleports
+                self.telemetry["speeds"].append(speed)
+            if accel is not None:
+                self.telemetry["accelerations"].append(accel)
+
         # 3. Track Successful Exits
         # get_arrived_ids returns vehicles that reached their destination (not crashed)
         newly_arrived = self.k.vehicle.get_arrived_ids()
@@ -207,6 +217,10 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         Returns the raw per-vehicle dictionaries for ONLY successful vehicles.
         Called only when terminated is True.
         """
+        import numpy as np
+        avg_speed = np.mean(self.telemetry["speeds"]) if self.telemetry["speeds"] else 0
+        avg_accel = np.mean(self.telemetry["accelerations"]) if self.telemetry["accelerations"] else 0
+
         successful_ids = self.telemetry["travel_times"].keys()
 
         # Filter zone durations: Keep ONLY vehicles that are also in travel_times
@@ -224,7 +238,9 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             "per_vehicle_travel_times": self.telemetry["travel_times"],
             
             # Successful vehicles only (Filtered)
-            "per_vehicle_zone_times": filtered_zone_times
+            "per_vehicle_zone_times": filtered_zone_times,
+            "avg_speed": avg_speed,
+            "avg_acceleration": avg_accel,
         }
 
     def step(self, action_dict):
@@ -268,16 +284,14 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         states = self.get_state() 
         
         crash = self.k.kernel_api.simulation.getCollidingVehiclesNumber() > 0
-        if crash:
-            print('Crash Occured')
+        
         # Global Truncation (Time limit reached)
         time_limit_reached = (self.time_counter >= (self.env_params.sims_per_step * (self.env_params.warmup_steps + self.env_params.horizon)))
        
         vehicles_left = len(new_sorted_ids)
         truncated = time_limit_reached
         terminated = crash or vehicles_left == 0 
-        if vehicles_left == 0:
-            print('rl 0 left the sim')
+        
         # Construct Multi-Agent Returns
         obs_dict = states if isinstance(states, dict) else {} 
         reward_dict = {}
@@ -318,9 +332,6 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         if telemetry_stats is not None:
             infos["__common__"] = {"telemetry": telemetry_stats}
         
-        print(f"obs = {obs_dict}")
-        print(f"actions = {action_dict}")
-        print(f"reward = {reward_dict}")
         return obs_dict, reward_dict, done_dict, truncated_dict, infos
 
     def _apply_non_rl_controls(self):

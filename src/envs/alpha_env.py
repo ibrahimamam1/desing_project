@@ -22,11 +22,11 @@ class AlphaEnv(Env_N):
     def __init__(self, env_params, sim_params, network, simulator='traci'):
         self.prev_pos = dict()
         self.absolute_position = dict()
-        self.max_neighbours = 5
+        self.max_neighbours = 3
         self.perception_radius = 50
         
         self.ego_obs_features = 4 # S_ego = [Vel, Accel, Dis along path, path] 
-        self.neighbour_obs_features = 3
+        self.neighbour_obs_features = 3 #S_neigh = [delta_V, Delta_D, TTC]
         
         super().__init__(env_params, sim_params, network, simulator)
         
@@ -38,10 +38,10 @@ class AlphaEnv(Env_N):
             dtype=np.float32)
 
         # Define Observation Space
-        total_obs_len = self.ego_obs_features
+        total_obs_len = self.ego_obs_features + (self.neighbour_obs_features * self.max_neighbours)
         self.observation_space = gym.spaces.Box(
-            low=-10.0,  # Bounded instead of inf
-            high=10.0,   # Bounded instead of inf
+            low=-1,  
+            high=1,   
             shape=(total_obs_len, ),
             dtype=np.float32)
    
@@ -54,7 +54,7 @@ class AlphaEnv(Env_N):
         for veh_id in self.k.vehicle.get_rl_ids():
                 obs = self._get_local_observation(veh_id)
                 #Clip observations to prevent extreme values
-                obs = np.clip(obs, -10.0, 10.0)
+                obs = np.clip(obs, -1, 1)
                 obs_dict[veh_id] = obs
             
         return obs_dict
@@ -67,10 +67,10 @@ class AlphaEnv(Env_N):
             # --- 1. Get Ego State ---
             max_speed = self.k.network.max_speed()
             ego_speed = self.k.vehicle.get_speed(ego_id)
-            # normalize speed
+            # normalize speed to [0,1]
             ego_speed = ego_speed / max_speed
             
-            # Normalized Accel
+            # get and Normalized Accel to [0,1]
             max_accel = self.env_params.additional_params.get('max_accel', 3.0)
             realized_accel = self.k.vehicle.get_realized_accel(ego_id)
             ego_accel = realized_accel / max_accel
@@ -91,20 +91,93 @@ class AlphaEnv(Env_N):
             # Distance traveled
             route = self.k.vehicle.get_route(ego_id)
             total_route_length = sum([self.k.network.edge_length(edge) for edge in route])
-
             # Get cumulative distance traveled
             ego_dis = self.k.vehicle.get_distance(ego_id)
-
             # Normalize: 0.0 (start) to 1.0 (end of route)
             ego_dis_norm = ego_dis / total_route_length if total_route_length > 0 else 0.0            
+            
             # Start the vector
             obs_vector = [ego_speed, ego_accel, ego_dis_norm, ego_path]
-            return np.array(obs_vector, dtype=np.float32)
             
+            # --- 2. Get Neighbour state ---
+            # Get ego position
+            ego_x, ego_y = self.k.vehicle.get_2d_position(ego_id)
+            ego_pos = np.array([ego_x, ego_y])
+            
+            # Collect neighbors within perception radius
+            neighbors_info = []
+            agent_ids = self.k.vehicle.get_rl_ids()
+            
+            for agent_id in agent_ids:
+                if agent_id == ego_id:
+                    continue 
+                
+                # Get agent's position
+                agent_x, agent_y = self.k.vehicle.get_2d_position(agent_id)
+                agent_pos = np.array([agent_x, agent_y])
+                
+                # Calculate Euclidean distance
+                distance = np.linalg.norm(ego_pos - agent_pos)
+                
+                # Check if agent is within perception range
+                if distance <= self.perception_radius:
+                    # Get agent velocity
+                    agent_speed = self.k.vehicle.get_speed(agent_id)
+                    
+                    # Compute relative velocity (delta_V)
+                    delta_v = agent_speed - (ego_speed * max_speed)  # Denormalize ego_speed
+                    # Normalize delta_v to [-1, 1] range
+                    delta_v_norm = delta_v / max_speed
+                    
+                    # Compute relative distance (Delta_D)
+                    # Normalize distance to [0, 1] based on perception radius
+                    delta_d_norm = distance / self.perception_radius
+                    
+                    # Compute Time-To-Collision (TTC)
+                    # TTC = distance / relative_velocity (only if approaching)
+                    relative_velocity = abs(delta_v)
+                    if relative_velocity > 0.1 and delta_v < 0:  # Vehicles approaching
+                        ttc = distance / relative_velocity
+                        max_ttc = self.perception_radius/max_speed
+                        ttc_norm = min(ttc / max_ttc, 1.0)
+                    else:
+                        # Not approaching or stationary - set to max value
+                        ttc_norm = 1.0
+                    
+                    # Store neighbor info: [delta_V, Delta_D, TTC, distance for sorting]
+                    neighbors_info.append({
+                        'delta_v': delta_v_norm,
+                        'delta_d': delta_d_norm,
+                        'ttc': ttc_norm,
+                        'distance': distance
+                    })
+            
+            # Sort neighbors by distance (closest first) and take top max_neighbours
+            neighbors_info.sort(key=lambda x: x['distance'])
+            neighbors_info = neighbors_info[:self.max_neighbours]
+            
+            # Add neighbor observations to vector
+            for neighbor in neighbors_info:
+                obs_vector.extend([
+                    neighbor['delta_v'],
+                    neighbor['delta_d'],
+                    neighbor['ttc']
+                ])
+            
+            # Pad with zeros if fewer than max_neighbours
+            num_actual_neighbors = len(neighbors_info)
+            if num_actual_neighbors < self.max_neighbours:
+                padding_length = (self.max_neighbours - num_actual_neighbors) * self.neighbour_obs_features
+                obs_vector.extend([0.0] * padding_length)
+            
+            return np.array(obs_vector, dtype=np.float32)
+        
         except Exception as e:
-            # FIX: If anything goes wrong, return safe zero observation
-            print(f"Warning: Error getting observation for {ego_id}: {e}")
-            return np.zeros(self.observation_space.shape[0], dtype=np.float32)
+            # Return zero observation if error occurs
+            print(f"Error getting observation for {ego_id}: {e}")
+            total_obs_len = self.ego_obs_features + (self.neighbour_obs_features * self.max_neighbours)
+            return np.zeros(total_obs_len, dtype=np.float32)
+
 
     def _apply_rl_actions(self, rl_actions_dict):
         """
@@ -143,13 +216,36 @@ class AlphaEnv(Env_N):
                 print(f"Warning: Error applying actions: {e}")
 
     def compute_reward(self, agent_id, fail, goal_reached):
-        """Reward with intermediate feedback for learning"""
         if fail:
-            return -50.0
+            return -150.0               # still large, but not apocalyptic
+
         if goal_reached:
-            return 10.0
-        
-        return -1 #Delay Penalty
+            return +120.0               # slightly higher incentive
+
+        speed = self.k.vehicle.get_speed(agent_id)
+        max_speed = self.k.network.max_speed()
+
+        # Dense speed reward — encourage being close to target speed
+        target_speed = 0.85 * max_speed          # slightly below max to avoid constant acceleration
+        speed_reward = -0.5 * (speed - target_speed)**2 / (max_speed**2)   # quadratic → peaks at target
+
+        # Very strong proximity penalty (near-miss shaping)
+        ego_pos = np.array(self.k.vehicle.get_2d_position(agent_id))
+        safety_penalty = 0.0
+
+        for other_id in self.k.vehicle.get_rl_ids():
+            if other_id == agent_id: continue
+            other_pos = np.array(self.k.vehicle.get_2d_position(other_id))
+            dist = np.linalg.norm(ego_pos - other_pos)
+
+            if dist < 15.0:                     # larger zone than 6 m
+                safety_penalty -= 8.0 * np.exp(-dist / 4.0)   # exponential decay, strong when very close
+
+        # Small liveliness bonus (discourage stopping forever)
+        if speed < 0.5:
+            safety_penalty -= 0.3
+
+        return speed_reward + safety_penalty
 
     def additional_command(self):
         """
