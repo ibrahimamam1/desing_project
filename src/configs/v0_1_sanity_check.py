@@ -11,7 +11,6 @@ from flow.core.params import InitialConfig
 from flow.core.params import TrafficLightParams
 from flow.core.params import EnvParams
 from flow.core.params import SumoParams, SumoCarFollowingParams
-
 from flow.controllers import RLController
 from flow.controllers import IDMController
 
@@ -38,7 +37,7 @@ period = 0.5
 
 max_vehicle_count_in_inflow = 20
 num_inflows_vehicles = random.randint(1, max_vehicle_count_in_inflow)
-num_rl_vehicles = 1
+num_rl_vehicles = 4
 num_non_rl_vehicles = 0
 
 vehicles = VehicleParams()
@@ -213,7 +212,7 @@ sim_params = SumoParams(
     overtake_right=False,
     seed=42,
     restart_instance=True,
-    print_warnings=True,
+    print_warnings=False,
     teleport_time=teleport_time,
     num_clients=1,
     color_by_speed=False,
@@ -280,16 +279,31 @@ register_env("flow_intersection", create_flow_env)
 def policy_mapping_fn(agent_id, episode, worker, **kwargs):
     return "shared_policy"
 
-# CRITICAL FIXES:
+from ray.rllib.algorithms.callbacks import DefaultCallbacks
+
+class TrafficCallbacks(DefaultCallbacks):
+    def on_episode_end(self, *, worker, base_env, policies, episode, env_index, **kwargs):
+        # In MultiAgentEnv, infos is a dict keyed by agent_id or "__common__"
+        # We grab the info from the last step
+        last_info = episode.last_info_for("__common__")
+        
+        if last_info and "telemetry" in last_info:
+            stats = last_info["telemetry"]
+            
+            # These will appear in TensorBoard under "ray/tune/custom_metrics/"
+            episode.custom_metrics["collisions_total"] = stats["number_of_collisions"]
+            episode.custom_metrics["speed_avg"] = stats["avg_speed"]
+            episode.custom_metrics["acceleration_avg"] = stats["avg_acceleration"]
+
 config = (
     PPOConfig()
     .environment(env="flow_intersection")
     .framework("torch")
     
     .rollouts(
-        num_rollout_workers=6, 
+        num_rollout_workers=7, 
         rollout_fragment_length='auto',
-        num_envs_per_worker = 1,
+        num_envs_per_worker = 2,
     )
     
     .multi_agent(
@@ -297,7 +311,6 @@ config = (
         policy_mapping_fn=policy_mapping_fn,
     )
     
-    # FIX 1: Lower learning rate significantly
     .training(
         train_batch_size=4000,  # Increase from 2000
         sgd_minibatch_size=256,  # Increase from 128
@@ -312,7 +325,6 @@ config = (
         kl_target=0.01,
         entropy_coeff=0.05,  # INCREASE from 0.01 for more exploration
     )    
-    # FIX 3: Add evaluation for monitoring
     .evaluation(
         evaluation_interval=10,
         evaluation_duration=5,
@@ -326,31 +338,23 @@ config = (
         min_sample_timesteps_per_iteration=2000,
     )
     
-    # FIX 4: Add resource allocation
     .resources(
         num_gpus=0,  # Set to 1 if you have GPU
     )
+    .callbacks(TrafficCallbacks)
 )
 
-print("--- BUILDING ALGORITHM ---")
 algo = config.build(logger_creator=lambda config: \
     ray.tune.logger.UnifiedLogger(config, TENSORBOARD_RUN_DIR, loggers=None))
 
 CHECKPOINT_ROOT = os.path.join(os.getcwd(), "checkpoints")
 shutil.rmtree(CHECKPOINT_ROOT, ignore_errors=True)
 
-print("--- STARTING TRAINING WITH STABILITY FIXES ---")
-print("Key changes:")
-print("  - Learning rate: 0.0003 -> 5e-5 (60x lower)")
-print("  - Added gradient clipping at 0.5")
-print("  - Added KL penalty and value function clipping")
-print("  - Increased batch size for stability")
-print("")
-
+print("\n--- TRAINING START ---")
 for i in range(100):
     result = algo.train()
     # Save checkpoint every 10 iterations
-    if i % 10 == 0 or i == 199:
+    if i % 10 == 0 or i == 99:
         save_dir = algo.save(checkpoint_dir=CHECKPOINT_ROOT)
         print(f"    --> Checkpoint saved to: {save_dir}")
 

@@ -4,12 +4,8 @@ from ray.rllib.algorithms.ppo import PPOConfig
 from ray.tune.registry import register_env
 from copy import deepcopy
 
-from copy import deepcopy
-from ray.rllib.algorithms.ppo import PPOConfig
 from flow.networks.all_turning_intersection import AllTurningIntersectionNetwork as myNet
 from flow.core.params import InFlows
-import os
-import sys
 
 from flow.core.params import VehicleParams
 from flow.core.params import NetParams
@@ -44,7 +40,7 @@ period = 0.5
 
 max_vehicle_count_in_inflow = 20
 num_inflows_vehicles = random.randint(1, max_vehicle_count_in_inflow)  # 1
-num_rl_vehicles = 1
+num_rl_vehicles = 4
 num_non_rl_vehicles = 0
 
 vehicles = VehicleParams()
@@ -232,7 +228,7 @@ sim_params = SumoParams(
     # large experiment runtimes, but also require the gui to be started
     # after every reset if "render" is set to True.
 
-    print_warnings=True,
+    print_warnings=False,
     teleport_time=teleport_time,
 
     num_clients=1,  # Number of clients that will connect to Traci
