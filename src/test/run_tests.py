@@ -81,7 +81,7 @@ sim_params = SumoParams(
     sim_step=sim_step,
     lateral_resolution=None,
     no_step_log=True,
-    render=False, 
+    render=True, 
     save_render=False,
     sight_radius=25,
     show_radius=False,
@@ -171,41 +171,41 @@ traffic_rates = {
                     {"N": medium_rate, "S": low_rate, "W": low_rate, "E": low_rate},
                 ],
 }
-#run_sim(
-#                   'test',       # Name for output file 
-#                    '100m_right_before_left.net.xml',         # The .net.xml file
-#                    UniformRandomNetwork,        # The intention Network class 
-#                    {"N": low_rate, "S": low_rate, "W": low_rate, "E": low_rate}, 
-#                    deepcopy(initial_config),
-#                    deepcopy(car_follow_params),
-#                    deepcopy(sim_params),
-#                    deepcopy(env_params)
-#                )
-#
-
-n_sims_per_scenario = 42 #Total of 7 hours per scenario 
-for scen_key, net_file in scenarios.items():
-    for int_key, int_class in intentions.items():
-        for rate_key, rate_list in traffic_rates.items():
-           
-            group_name = f"{scen_key}_{int_key}_{rate_key}"
-            for i in range(n_sims_per_scenario):
-               # 1. Randomly pick one flow configuration from the list
-                current_flow = random.choice(rate_list)
-                print(f"--- Starting: {group_name} Run {i} ---")
-               
-                run_sim(
-                    group_name,       # Name for output file 
-                    net_file,         # The .net.xml file
-                    int_class,        # The intention Network class 
-                    current_flow,      # The flow dictionary
+run_sim(
+                   'test',       # Name for output file 
+                    '100m_right_before_left.net.xml',         # The .net.xml file
+                    UniformRandomNetwork,        # The intention Network class 
+                    {"N": medium_rate, "S": medium_rate, "W": medium_rate, "E": medium_rate}, 
                     deepcopy(initial_config),
                     deepcopy(car_follow_params),
                     deepcopy(sim_params),
                     deepcopy(env_params)
                 )
-                kill_sumo_processes()                 
-                print(f"--- Finished Run {i} ---")
 
-from plot2 import main
-main()
+
+#n_sims_per_scenario = 42 #Total of 7 hours per scenario 
+#for scen_key, net_file in scenarios.items():
+#    for int_key, int_class in intentions.items():
+#        for rate_key, rate_list in traffic_rates.items():
+#           
+#            group_name = f"{scen_key}_{int_key}_{rate_key}"
+#            for i in range(n_sims_per_scenario):
+#               # 1. Randomly pick one flow configuration from the list
+#                current_flow = random.choice(rate_list)
+#                print(f"--- Starting: {group_name} Run {i} ---")
+#               
+#                run_sim(
+#                    group_name,       # Name for output file 
+#                    net_file,         # The .net.xml file
+#                    int_class,        # The intention Network class 
+#                    current_flow,      # The flow dictionary
+#                    deepcopy(initial_config),
+#                    deepcopy(car_follow_params),
+#                    deepcopy(sim_params),
+#                    deepcopy(env_params)
+#                )
+#                kill_sumo_processes()                 
+#                print(f"--- Finished Run {i} ---")
+#
+#from plot2 import main
+#main()

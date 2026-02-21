@@ -1,11 +1,11 @@
 """Base environment class. This is the parent of all other environments."""
-from ray.rllib.env.multi_agent_env import MultiAgentEnv
 from abc import ABCMeta, abstractmethod
 from copy import deepcopy
 import os
 import atexit
 import numpy as np
 import random
+import gymnasium as gym
 from flow.renderer.pyglet_renderer import PygletRenderer as Renderer
 from flow.utils.flow_warnings import deprecated_attribute
 from gymnasium.spaces import Box
@@ -23,10 +23,8 @@ RED = '\033[91m'
 CYAN = '\033[96m'
 RESET = '\033[0m'
 
-class Env_N(MultiAgentEnv, metaclass=ABCMeta):
+class Env_N(gym.Env, metaclass=ABCMeta):
     """
-    Multi-Agent Base environment class.
-    Adapted from Flow to work with Ray RLlib MultiAgentEnv.
     """
     metadata = {'render_modes': ['human']}
 
@@ -38,10 +36,6 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
                  scenario=None,
                  render_mode=None
                  ):
-        
-        # Initialize Ray MultiAgentEnv
-        super().__init__()
-        self._agent_ids = {"RL_0", "RL_1", "RL_2", "RL_3"} 
         
         self.env_params = env_params
         if scenario is not None:
@@ -68,7 +62,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         self.simulator = simulator
 
         # Telemetry Accumulators
-        self.telemetry = None 
+        self._init_telemetry()
 
         # --- FLOW KERNEL INITIALIZATION ---
         self.k = Kernel(simulator=self.simulator, sim_params=self.sim_params)
@@ -207,10 +201,11 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
                 # Cleanup from entry tracker
                 del self.telemetry["entry_times"][veh_id]
 
-        # 4. Track Collisions
-        n_colliding = self.k.kernel_api.simulation.getCollidingVehiclesNumber()
-        if n_colliding > 0:
-            self.telemetry["collisions"] += n_colliding
+        # 4. Track Collisions (RL vehicles only)
+        colliding_ids = self.k.kernel_api.simulation.getCollidingVehiclesIDList()
+        rl_collisions = sum(1 for v in colliding_ids if v.startswith("RL"))
+        if rl_collisions > 0:
+            self.telemetry["collisions"] += rl_collisions
 
     def _compute_telemetry_stats(self):
         """
@@ -243,16 +238,16 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             "avg_acceleration": avg_accel,
         }
 
-    def step(self, action_dict):
+    def step(self, action):
         """
         Advance the environment by one step.
         """
         self.step_counter_within_rl_step = 0
+        
         # Snapshot of agents before step
         sorted_ids = set(self.sorted_ids)
-       
-        self.apply_rl_actions(action_dict) 
-        
+        if sorted_ids:
+            self.apply_rl_actions(action) 
         if hasattr(self, "additional_command"):
             self.additional_command()
         
@@ -268,10 +263,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
             self.k.simulation.simulation_step()
             self.k.update(reset=False)
             
-            # --- UPDATE TELEMETRY (Per Sim Step) ---
-            if hasattr(self, "_update_telemetry_step"):
-                self._update_telemetry_step()
-            # ---------------------------------------
+            self._update_telemetry_step()
             
             if self.sim_params.render:
                 self.k.vehicle.update_vehicle_colors()
@@ -281,58 +273,37 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         agents_that_left = sorted_ids - new_sorted_ids
         
         # 3. Retrieve Observations
-        states = self.get_state() 
+        obs = self.get_state() 
+        colliding_ids = set(self.k.kernel_api.simulation.getCollidingVehiclesIDList())
+        rl_ids_set = set(self.k.vehicle.get_rl_ids())
+        rl_crash_ids = colliding_ids & rl_ids_set  # Only RL vehicles that actually crashed
         
-        crash = self.k.kernel_api.simulation.getCollidingVehiclesNumber() > 0
+        # Check if RL vehicle successfully completed its route
+        arrived_ids = set(self.k.vehicle.get_arrived_ids())
+        rl_arrived = arrived_ids & {vid for vid in self.initial_ids if vid.startswith("RL")}
+        goal_reached = len(rl_arrived) > 0
         
         # Global Truncation (Time limit reached)
         time_limit_reached = (self.time_counter >= (self.env_params.sims_per_step * (self.env_params.warmup_steps + self.env_params.horizon)))
        
         vehicles_left = len(new_sorted_ids)
         truncated = time_limit_reached
-        terminated = crash or vehicles_left == 0 
+        # Only terminate if an RL agent crashed OR successfully arrived
+        rl_crashed = len(rl_crash_ids) > 0
+        terminated = rl_crashed or goal_reached or vehicles_left == 0
         
-        # Construct Multi-Agent Returns
-        obs_dict = states if isinstance(states, dict) else {} 
-        reward_dict = {}
-        done_dict = {}
-        truncated_dict = {}
-        infos = {}
-        
-        # mark exiting agents as Done ---
-        for agent_id in agents_that_left:
-            reward_dict[agent_id] = self.compute_reward(
-                agent_id, 
-                fail=crash, 
-                goal_reached=True
-            )
-            done_dict[agent_id] = True  
-            truncated_dict[agent_id] = False
-        
-        # Handle active agents
-        for agent_id in obs_dict.keys():
-            reward_dict[agent_id] = self.compute_reward(
-                agent_id, 
-                fail=crash, 
-                goal_reached=False
-            )
-            done_dict[agent_id] = terminated
-            truncated_dict[agent_id] = truncated
-            infos[agent_id] = {}
-        
-        # Add __all__ to indicate if entire episode is done
-        done_dict["__all__"] = terminated or truncated
-        truncated_dict["__all__"] = truncated
+        reward = self.compute_reward('RL_0', rl_crashed, goal_reached)
         
         # --- COMPUTE TELEMETRY ---
         telemetry_stats = None
-        if (terminated or truncated) and hasattr(self, "_compute_telemetry_stats"):
+        if (terminated or truncated):
             telemetry_stats = self._compute_telemetry_stats()
-
-        if telemetry_stats is not None:
-            infos["__common__"] = {"telemetry": telemetry_stats}
         
-        return obs_dict, reward_dict, done_dict, truncated_dict, infos
+        infos = {}
+        if telemetry_stats is not None:
+            infos["telemetry"] = telemetry_stats
+        
+        return obs, reward, terminated, truncated, infos
 
     def _apply_non_rl_controls(self):
         """Helper to handle IDM/LaneChange controllers for non-RL vehicles."""
@@ -403,10 +374,9 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         if self.sim_params.render:
             self.k.vehicle.update_vehicle_colors()
 
-        states = self.get_state()
-        obs_dict = states if isinstance(states, dict) else {}
+        obs = self.get_state()
         
-        return obs_dict, {}
+        return obs, {}
     
     @property
     def sorted_ids(self):
@@ -418,19 +388,8 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
                 rl_ids.append(id)
         return rl_ids
     
-    def apply_rl_actions(self, action_dict):
-        if action_dict is None:
-            return
-
-        clipped_dict = {}
-        for agent_id, action in action_dict.items():
-            if isinstance(self.action_space, Box):
-                clipped_dict[agent_id] = np.clip(
-                    action, self.action_space.low, self.action_space.high)
-            else:
-                clipped_dict[agent_id] = action
-                
-        self._apply_rl_actions(clipped_dict)
+    def apply_rl_actions(self, action):
+        self._apply_rl_actions(action)
 
     @abstractmethod
     def _apply_rl_actions(self, rl_actions):
@@ -441,7 +400,7 @@ class Env_N(MultiAgentEnv, metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def compute_reward(self, agent_id, rl_action, **kwargs):
+    def compute_reward(self, agent_id, fail, goal_reached, **kwargs):
         pass
 
     def setup_initial_state(self):
