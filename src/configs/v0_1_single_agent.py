@@ -1,11 +1,11 @@
 import argparse
 import os
 import sys
-import shutil
 from copy import deepcopy
 from datetime import datetime
-
+import shutil
 import random
+import math 
 
 parser = argparse.ArgumentParser(description="Train or evaluate the AlphaEnv PPO agent.")
 group = parser.add_mutually_exclusive_group(required=True)
@@ -14,7 +14,9 @@ group.add_argument("--eval",  metavar="CHECKPOINT_PATH",
                    help="Path to a checkpoint directory to load and evaluate.")
 args = parser.parse_args()
 
-from flow.networks.all_turning_intersection import AllTurningIntersectionNetwork as myNet
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
+from networks.all_straight import AllStraghtNetwork as myNet
 from flow.core.params import (
     VehicleParams, NetParams, InitialConfig, TrafficLightParams,
     EnvParams, SumoParams, SumoCarFollowingParams, InFlows,
@@ -24,6 +26,7 @@ from flow.controllers import RLController, IDMController
 IDM_acceleration_controller = IDMController
 RL_vehicle_acceleration_controller = RLController
 
+myTag = "AlphaV0.1"
 min_gap       = 0.9
 max_accel     = 2.6
 max_decel     = 4.5
@@ -35,12 +38,16 @@ impatience    = 0.0
 car_follow_model = "IDM"
 sigma = 0
 tau   = 0.8
+horizon = 180
+sim_step = 0.25
+warmup_steps = 5
+number_of_sim_steps_per_RlAction_step = 1
 RENDER_MODE = False
 
-max_vehicle_count_in_inflow = 20
-num_inflows_vehicles = random.randint(1, max_vehicle_count_in_inflow)
-num_rl_vehicles      = 1
-num_non_rl_vehicles  = 7
+
+############### VEHICLE Configuration ##########################
+num_rl_vehicles      = 0
+num_non_rl_vehicles  = 0
 
 rl_speed_mode    = 0
 non_rl_speed_mode = 31
@@ -55,6 +62,15 @@ RL_car_following_params = SumoCarFollowingParams(
     speed_factor=speed_factor, speed_dev=speed_dev,
     impatience=impatience, car_follow_model=car_follow_model,
 )
+NonRL_car_following_params = SumoCarFollowingParams(
+    speed_mode=non_rl_speed_mode,
+    accel=max_accel, decel=max_decel,
+    sigma=sigma, tau=tau,
+    min_gap=min_gap, max_speed=max_speed,
+    speed_factor=speed_factor, speed_dev=speed_dev,
+    impatience=impatience, car_follow_model=car_follow_model,
+)
+
 vehicles.add(
     veh_id="RL",
     acceleration_controller=(RL_vehicle_acceleration_controller, {}),
@@ -63,15 +79,6 @@ vehicles.add(
     car_following_params=RL_car_following_params,
     lane_change_params=None,
     color="blue",
-)
-
-NonRL_car_following_params = SumoCarFollowingParams(
-    speed_mode=non_rl_speed_mode,
-    accel=max_accel, decel=max_decel,
-    sigma=sigma, tau=tau,
-    min_gap=min_gap, max_speed=max_speed,
-    speed_factor=speed_factor, speed_dev=speed_dev,
-    impatience=impatience, car_follow_model=car_follow_model,
 )
 vehicles.add(
     veh_id="NonRL",
@@ -83,16 +90,75 @@ vehicles.add(
     color="red",
 )
 
+############################# InFlow Configuration #########################
+inflow = InFlows()
+
+max_vehicle_count_in_inflow = 20
+num_inflows_vehicles = random.randint(1, max_vehicle_count_in_inflow)
+
+#### TRAFFIC RATES
+high = 500
+medium = 300
+low = 150
+
+traffic_rate = {"N": medium, "S": medium, "W": medium, "E": medium}
+
+inflow.add(veh_type="NonRL",
+           edge="E#T-X",
+           probability=traffic_rate["N"]/3600,
+           depart_lane=0,
+           depart_speed=initial_speed,
+           begin=1,
+           color="green"
+           )
+
+inflow.add(veh_type="NonRL",
+           edge="E#R-X",
+           probability=traffic_rate["E"]/3600,
+           depart_lane=0,
+           depart_speed=initial_speed,
+           begin=1,
+           color="green"
+           )
+
+inflow.add(veh_type="NonRL",
+           edge="E#D-X",
+           probability=traffic_rate["S"]/3600,
+           depart_lane=0,
+           depart_speed=initial_speed,
+           begin=1,
+           color="green"
+           )
+
+inflow.add(veh_type="NonRL",
+           edge="E#L-X",
+           probability=traffic_rate["W"]/3600,
+           depart_lane=0,
+           depart_speed=initial_speed,
+           begin=1,
+           color="green"
+           )
+
+inflow.add(veh_type="RL",
+           edge="E#L-X",
+           probability=traffic_rate["W"]/3600,
+           depart_lane=0,
+           depart_speed=initial_speed,
+           begin=warmup_steps,
+           number=1,
+           color="red"
+           )
 root_dir        = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 output_file_dir = os.path.join(root_dir, "results")
 net_file_dir    = os.path.join(root_dir, "networks")
 
 net_file_name = "100m_unregulated.net.xml"
-net_file      = os.path.join(net_file_dir, net_file_name)
+net_file= os.path.join(net_file_dir, net_file_name)
 
 net_params = NetParams(
     osm_path=None,
     template=net_file,
+    inflows=inflow
 )
 
 EDGES_DISTRIBUTION = ["E#D-X", "E#L-X", "E#R-X", "E#T-X"]
@@ -108,12 +174,6 @@ initial_config = InitialConfig(
     edges_distribution=EDGES_DISTRIBUTION,
     additional_params=None,
 )
-
-myTag = "AlphaV0.1"
-horizon = 200
-sim_step = 0.25
-number_of_sim_steps_per_RlAction_step = 1
-
 env_params = EnvParams(
     additional_params={
         "max_accel": max_accel,
@@ -122,7 +182,7 @@ env_params = EnvParams(
         "sort_vehicles": False,
     },
     horizon=horizon,
-    warmup_steps=0,
+    warmup_steps=5,
     sims_per_step=number_of_sim_steps_per_RlAction_step,
     evaluate=False,
     clip_actions=True,
@@ -193,61 +253,50 @@ class TrafficCallbacks(DefaultCallbacks):
         avg_speed = telemetry.get("avg_speed", 0.0)
         episode.custom_metrics["avg_speed"] = float(avg_speed)
 
-    def on_train_result(
-        self,
-        *,
-        algorithm,
-        result: dict,
-        **kwargs,
-    ) -> None:
-        result.pop("sampler_results", None)
-        result.pop("connector_metrics", None)
-        result.pop("sampler_perf", None)
-        result.pop("perf", None)
+    def on_train_result(self, *, algorithm, result: dict, **kwargs) -> None:
+        keep = {
+            "episode_reward_mean",
+            "episode_len_mean",
+            "custom_metrics",
+            "evaluation",
+            "info",
+            "training_iteration",
+            "timesteps_total",
+        }
+        keys_to_delete = [k for k in result if k not in keep]
+        for k in keys_to_delete:
+            result.pop(k)
 
-        # Specific curves the user wants gone
-        result.pop("agent_timesteps_total", None)
-        result.pop("episodes_this_iter", None)
+        if "custom_metrics" in result and isinstance(result["custom_metrics"], dict):
+            custom_keep = {"avg_speed_mean", "collisions_mean"}
+            custom_keys_to_delete = [k for k in result["custom_metrics"] if k not in custom_keep]
+            for k in custom_keys_to_delete:
+                result["custom_metrics"].pop(k)
 
-        # Strip sampler_results from inside the evaluation sub-dict
         if "evaluation" in result and isinstance(result["evaluation"], dict):
-            result["evaluation"].pop("sampler_results", None)
-            result["evaluation"].pop("agent_timesteps_total", None)
-            result["evaluation"].pop("episodes_this_iter", None)
+            eval_keep = {"episode_reward_mean", "episode_len_mean"}
+            eval_keys_to_delete = [k for k in result["evaluation"] if k not in eval_keep]
+            for k in eval_keys_to_delete:
+                result["evaluation"].pop(k)
 
-            result["evaluation"].pop("connector_metrics", None)
-            result["evaluation"].pop("sampler_perf", None)
-            result["evaluation"].pop("num_healthy_workers", None)
-            result["evaluation"].pop("num_recreated_workers", None)
-            result["evaluation"].pop("num_agent_steps_sampled", None)
-            result["evaluation"].pop("num_agent_steps_trained", None)
+        if "info" in result and isinstance(result["info"], dict):
+            info = result["info"]
+            if "learner" in info and isinstance(info["learner"], dict):
+                learner = info["learner"]
+                if "default_policy" in learner and isinstance(learner["default_policy"], dict):
+                    info_keep = {"entropy", "mean_kl_loss", "policy_loss", "total_loss", "vf_loss", "vf_explained_var"}
+                    info_keys_to_delete = [k for k in learner["default_policy"] if k not in info_keep]
+                    for k in info_keys_to_delete:
+                        learner["default_policy"].pop(k)
+                 
+                info_keys_to_delete = [k for k in learner if k != "default_policy"]
+                for k in info_keys_to_delete:
+                    learner.pop(k) 
+            
+            info_keys_to_delete = [k for k in result["info"] if k != "learner"]
+            for k in info_keys_to_delete:
+                result["info"].pop(k)        
 
-
-        # Ray/Tune internal bookkeeping, not useful for analysis
-        result.pop("config", None)
-        result.pop("date", None)
-        result.pop("timestamp", None)
-        result.pop("time_this_iter_s", None)
-        result.pop("time_total_s", None)
-        result.pop("pid", None)
-        result.pop("hostname", None)
-        result.pop("node_ip", None)
-        result.pop("trial_id", None)
-        result.pop("experiment_id", None)
-        result.pop("done", None)
-    
-        # Verbose timing breakdowns (keep if you want to debug performance)
-        result.pop("timers", None)
-        result.pop("counters", None)
-    
-        # Low-level counters, redundant with iteration number
-        result.pop("num_healthy_workers", None)
-        result.pop("num_recreated_workers", None)
-        result.pop("num_agent_steps_sampled", None)
-        result.pop("num_agent_steps_trained", None)
-        result.pop("timesteps_total", None)
-        result.pop("time_since_restore", None)
-       
 def create_flow_env(env_config):
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from envs.alpha_env_v01 import AlphaEnv_v01
@@ -273,65 +322,69 @@ def create_flow_env(env_config):
         sim_params=_sim_params,
         network=network,
         simulator=params["simulator"],
-    )
+        )
 
 
 register_env("alpha_env_v01", create_flow_env)
 
 def build_config(num_workers: int = 7, render: bool = False) -> PPOConfig:
-    cfg = (
-        PPOConfig()
-        .environment(env="alpha_env_v01", env_config={"render": render})
-        .framework("torch")
-        .rollouts(
-            num_rollout_workers=num_workers,
-            rollout_fragment_length="auto",
-            num_envs_per_worker=1,
+        cfg = (
+            PPOConfig()
+            .environment(env="alpha_env_v01", env_config={"render": render}, disable_env_checking=True)
+            .framework("torch")
+            .rollouts(
+                num_rollout_workers=num_workers,
+                rollout_fragment_length="auto",
+                num_envs_per_worker=1,
+            )
+            .training(
+                train_batch_size=2048,
+                sgd_minibatch_size=256,
+                num_sgd_iter=10,
+                
+                # --- CORRECTED RLlib 2.7 API ---
+                # Pass the schedule directly into 'lr' and 'entropy_coeff'
+                lr=[[0, 3e-4], [2_000_000, 1e-5]], 
+                entropy_coeff=[[0, 0.02], [2_000_000, 0.0]], 
+                
+                gamma=0.995, 
+                lambda_=0.95,
+                clip_param=0.2,
+                vf_clip_param=50.0, 
+                grad_clip=0.5,
+                kl_coeff=0.2,
+                kl_target=0.01,
+            )
+            .evaluation(
+                evaluation_interval=100,
+                evaluation_duration=10,
+                evaluation_num_workers=1,
+            )
+            .debugging(log_level="WARN")
+            .reporting(
+                metrics_num_episodes_for_smoothing=10,
+                min_time_s_per_iteration=0,
+                min_sample_timesteps_per_iteration=2000,
+            )
+            .resources(num_gpus=0)
+            .callbacks(TrafficCallbacks)
         )
-        .training(
-            train_batch_size=2048,
-            sgd_minibatch_size=256,
-            num_sgd_iter=10,
-            lr=3e-4,
-            gamma=0.99,
-            lambda_=0.95,
-            clip_param=0.2,
-            vf_clip_param=10.0,
-            grad_clip=0.5,
-            kl_coeff=0.2,
-            kl_target=0.01,
-            entropy_coeff=0.01,
-        )
-        .evaluation(
-            evaluation_interval=10,
-            evaluation_duration=5,
-            evaluation_num_workers=1,
-        )
-        .debugging(log_level="WARN")
-        .reporting(
-            metrics_num_episodes_for_smoothing=10,
-            min_time_s_per_iteration=0,
-            min_sample_timesteps_per_iteration=2000,
-        )
-        .resources(num_gpus=0)
-        .callbacks(TrafficCallbacks)
-    )
-    return cfg
-
+        return cfg
 # ─────────────────────────────────────────────
 # Checkpoint helpers
 # ─────────────────────────────────────────────
 ENV_NAME  = "alpha_env_v01"
 ALGO_NAME = "PPO"
 
-# FIX: unique subdirectory per run so previous checkpoints are never overwritten
 CHECKPOINT_ROOT = os.path.join(
     os.getcwd(),
-    "checkpoints",
+    "checkpoints/v0_1",
     f"{ENV_NAME}_{ALGO_NAME}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
 )
+FINAL_MODEL_DIR = os.path.join(CHECKPOINT_ROOT, "final")
+BEST_CHECKPOINT_DIR = os.path.join(CHECKPOINT_ROOT, "best")
 
-TENSORBOARD_DIR = os.path.join(os.getcwd(), "tensorboard_logs")
+TENSORBOARD_DIR = os.path.join(os.getcwd(), "tensorboard_logs/v0_1")
 RUN_NAME = f"flow_ppo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 TENSORBOARD_RUN_DIR = os.path.join(TENSORBOARD_DIR, RUN_NAME)
 
@@ -344,21 +397,36 @@ def train():
         )
     )
 
-    os.makedirs(CHECKPOINT_ROOT, exist_ok=True)
+    os.makedirs(FINAL_MODEL_DIR, exist_ok=True)
+    os.makedirs(BEST_CHECKPOINT_DIR, exist_ok=True)
+    
     print(f"\n--- TRAINING START ---")
-    print(f"Checkpoints → {CHECKPOINT_ROOT}")
     print(f"TensorBoard → {TENSORBOARD_RUN_DIR}\n")
+    
+    num_iterations = 1000
+    best_reward = -float('inf')
 
-    for i in range(5000):
+    for i in range(num_iterations):
         result = algo.train()
-        mean_reward = result.get("episode_reward_mean", float("nan"))
-        print(f"  Iter {i+1:3d} | mean_reward={mean_reward:.3f}")
 
-        if i % 10 == 0 or i == 999:
-            save_path = algo.save(checkpoint_dir=CHECKPOINT_ROOT)
-            print(f"    --> Checkpoint saved: {save_path}")
+        current_reward = result.get("episode_reward_mean")
+
+        if current_reward is not None and not math.isnan(current_reward):
+            if current_reward > best_reward:
+                best_reward = current_reward
+                
+                if os.path.exists(BEST_CHECKPOINT_DIR):
+                    shutil.rmtree(BEST_CHECKPOINT_DIR)
+                
+                best_save_path = algo.save(checkpoint_dir=BEST_CHECKPOINT_DIR)
+                print(f"  [⭐ NEW BEST] Iteration: {i:4d} | Reward: {best_reward:.3f} | Saved to: {best_save_path}")
 
     print("\n--- TRAINING COMPLETE ---")
+   
+    save_path = algo.save(checkpoint_dir=FINAL_MODEL_DIR)
+    print(f"Final Model → {FINAL_MODEL_DIR}")
+    print(f"Best Model  → {BEST_CHECKPOINT_DIR}")
+    print(f"Tensorboard  → {TENSORBOARD_RUN_DIR}")
     ray.shutdown()
 
 def evaluate(checkpoint_path: str, num_iterations: int = 20):

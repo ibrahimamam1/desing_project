@@ -1,6 +1,7 @@
 #============NEW ACCEL ENV ENVIRONMENT BY IBRAHIMA============
 
 import gymnasium as gym
+from gymnasium.spaces import Box
 import numpy as np
 import sys 
 import os 
@@ -20,47 +21,59 @@ class AlphaEnv_v01(Env_N):
         self.max_neighbours = 5
         self.perception_radius = 50
         
-        # Ego-centric observation: S_ego = [v_norm, cos θ, sin θ]
-        self.ego_obs_features = 3
+        # Ego-centric observation: S_ego = [d_norm, v_norm, cos θ, sin θ]
+        self.ego_obs_features = 4
         # Per-neighbor (ego-relative): S_i = [dx, dy, v, cos Δθ, sin Δθ]
         self.neighbour_obs_features = 5
         
         super().__init__(env_params, sim_params, network, simulator)
         
         # Defining action space - KEEP NORMALIZED
-        self.action_space = gym.spaces.Box(
+        self.action_space = Box(
             low=-1.0,
             high=1.0,
             shape=(1, ), 
             dtype=np.float32)
 
-        # Define Observation Space: 3 ego + 5*5 neighbors = 28
         total_obs_len = self.ego_obs_features + (self.neighbour_obs_features * self.max_neighbours)
-        self.observation_space = gym.spaces.Box(
+        self.observation_space = Box(
             low=-1.0,  
             high=1.0,   
             shape=(total_obs_len, ),
             dtype=np.float32)
 
-        # Reward shaping parameters
-        self.safe_distance = 10.0  # meters — proximity penalty kicks in below this
-   
+        self.last_action = 0.0
+        self.last_obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
+
     def get_state(self):
         """
         Return the observation for the single RL agent.
         Returns a flat np.array matching self.observation_space.
         """
-        # If RL_0 is no longer in the network, return zeros (terminal step)
-        if 'RL_0' not in self.k.vehicle.get_ids():
-            total_obs_len = self.ego_obs_features + (self.neighbour_obs_features * self.max_neighbours)
-            return np.zeros(total_obs_len, dtype=np.float32)
+        rl_ids = self.k.vehicle.get_rl_ids()
+        
+        # If the vehicle despawned (reached goal or crashed), return the 
+        # last valid observation to prevent value function spikes.
+        if not rl_ids:
+            return self.last_obs
 
-        return self._get_local_observation('RL_0')
+        # Get current observation
+        obs = self._get_local_observation(rl_ids[0])
+        
+        # Cache the valid observation for the terminal step
+        self.last_obs = obs
+        
+        return obs
 
     def _get_local_observation(self, ego_id):
         # --- 1. Ego State ---
-        pos_ret = self.k.vehicle.get_2d_position(ego_id)
-        ego_x, ego_y = pos_ret
+        # Ego Distance to goal
+        route = self.k.vehicle.get_route(ego_id)
+        total_route_length = sum([self.k.network.edge_length(edge) for edge in route])
+
+        ego_dis = self.k.vehicle.get_distance(ego_id) # distance traveled by vehicle
+        dis_to_goal = total_route_length - ego_dis
+        dis_to_goal_norm = np.clip(dis_to_goal / total_route_length, -1, 1) # normalise distance to goal
 
         # Ego Speed (normalized, clipped)
         ego_speed = self.k.vehicle.get_speed(ego_id)
@@ -73,13 +86,16 @@ class AlphaEnv_v01(Env_N):
         ego_cos = np.cos(ego_angle_rad)
         ego_sin = np.sin(ego_angle_rad)
         
-        # Ego-centric obs: only speed and heading (position is the reference frame)
-        obs_vector = [ego_speed_norm, ego_cos, ego_sin]
+        obs_vector = [dis_to_goal_norm, ego_speed_norm, ego_cos, ego_sin]
         
         # --- 2. Neighbor States (ego-centric relative frame) ---
         neighbors_info = []
         all_ids = self.k.vehicle.get_ids()
         
+        pos_ret = self.k.vehicle.get_2d_position(ego_id)
+        ego_x, ego_y = pos_ret
+
+
         for other_id in all_ids:
             if other_id == ego_id:
                 continue
@@ -138,8 +154,10 @@ class AlphaEnv_v01(Env_N):
         # Pad with zeros if fewer than max_neighbours
         num_actual = len(neighbors_info)
         if num_actual < self.max_neighbours:
-            padding = (self.max_neighbours - num_actual) * self.neighbour_obs_features
-            obs_vector.extend([0.0] * padding)
+            missing_count = self.max_neighbours - num_actual
+            # Pad with [dx=1.0, dy=1.0, v=0.0, cos=0.0, sin=0.0]
+            for _ in range(missing_count):
+                obs_vector.extend([1.0, 1.0, 0.0, 0.0, 0.0])
         
         return np.array(obs_vector, dtype=np.float32)
 
@@ -159,23 +177,30 @@ class AlphaEnv_v01(Env_N):
             return
         self.k.vehicle.apply_acceleration(rl_ids, [real_action])
 
-    def compute_reward(self, agent_id, fail, goal_reached):
+    def compute_reward(self, agent_id, fail, goal_reached, current_action=None):
         if fail:
-            return -10.0
-
+            return -10.0  
         if goal_reached:
-            return +10.0
-        
+            return 15.0   
+            
         if agent_id not in self.k.vehicle.get_ids():
             return 0.0
 
         speed = self.k.vehicle.get_speed(agent_id)
         max_speed = self.k.network.max_speed()
 
-        # 1. Speed reward: encourage progress (0.0 to 1.0)
-        speed_reward = 1.0 * (speed / max_speed)
+        # Step rewards balanced to prevent "suicide loophole"
+        speed_reward = 0.05 * (speed / max_speed)
+        time_penalty = -0.02 
         
-        return speed_reward
+        # Action smoothness penalty
+        action_penalty = 0.0
+        if current_action is not None:
+            action_val = float(current_action[0])
+            action_penalty = -0.02 * abs(action_val - self.last_action)
+            self.last_action = action_val
+        
+        return speed_reward + time_penalty + action_penalty
 
     def additional_command(self):
         """

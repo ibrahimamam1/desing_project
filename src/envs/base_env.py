@@ -57,6 +57,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         self.step_counter_within_rl_step = 0
         self.initial_state = {}
         self.state = None
+        self.rl_agent_spawned = False
 
         self.sim_step = sim_params.sim_step
         self.simulator = simulator
@@ -203,7 +204,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
 
         # 4. Track Collisions (RL vehicles only)
         colliding_ids = self.k.kernel_api.simulation.getCollidingVehiclesIDList()
-        rl_collisions = sum(1 for v in colliding_ids if v.startswith("RL"))
+        rl_collisions = sum(1 for v in colliding_ids if v in self.k.vehicle.get_rl_ids())
         if rl_collisions > 0:
             self.telemetry["collisions"] += rl_collisions
 
@@ -269,6 +270,10 @@ class Env_N(gym.Env, metaclass=ABCMeta):
                 self.k.vehicle.update_vehicle_colors()
        
         new_sorted_ids = set(self.sorted_ids)
+        
+        if len(new_sorted_ids) > 0:
+            self.rl_agent_spawned = True
+            
         # Agents that existed before but left the system
         agents_that_left = sorted_ids - new_sorted_ids
         
@@ -278,11 +283,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         rl_ids_set = set(self.k.vehicle.get_rl_ids())
         rl_crash_ids = colliding_ids & rl_ids_set  # Only RL vehicles that actually crashed
         
-        # Check if RL vehicle successfully completed its route
-        arrived_ids = set(self.k.vehicle.get_arrived_ids())
-        rl_arrived = arrived_ids & {vid for vid in self.initial_ids if vid.startswith("RL")}
-        goal_reached = len(rl_arrived) > 0
-        
+        goal_reached = self.rl_agent_spawned and len(rl_ids_set) == 0  #agent spawned then left
         # Global Truncation (Time limit reached)
         time_limit_reached = (self.time_counter >= (self.env_params.sims_per_step * (self.env_params.warmup_steps + self.env_params.horizon)))
        
@@ -290,9 +291,10 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         truncated = time_limit_reached
         # Only terminate if an RL agent crashed OR successfully arrived
         rl_crashed = len(rl_crash_ids) > 0
-        terminated = rl_crashed or goal_reached or vehicles_left == 0
+        terminated = rl_crashed or goal_reached
         
-        reward = self.compute_reward('RL_0', rl_crashed, goal_reached)
+        rl_agent_id = list(new_sorted_ids)[0] if new_sorted_ids else 'RL_0'
+        reward = self.compute_reward(rl_agent_id, rl_crashed, goal_reached, current_action=action)
         
         # --- COMPUTE TELEMETRY ---
         telemetry_stats = None
@@ -332,8 +334,11 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         # -----------------------
 
         super().reset(seed=seed)
-        
+        self.last_action = 0.0
+        self.last_obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
+
         self.time_counter = 0
+        self.rl_agent_spawned = False
         if self.should_render:
             self.sim_params.render = True
             self.restart_simulation(self.sim_params)
@@ -373,7 +378,15 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         
         if self.sim_params.render:
             self.k.vehicle.update_vehicle_colors()
+        
+        while not self.k.vehicle.get_rl_ids():
+            self._apply_non_rl_controls()
+            self.k.simulation.simulation_step()
+            self.k.update(reset=False)
+            self.time_counter += self.sim_step
+            self.step_counter += 1
 
+        # Now that the agent exists, grab the FIRST real observation
         obs = self.get_state()
         
         return obs, {}
@@ -381,12 +394,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
     @property
     def sorted_ids(self):
         """Sort the vehicle ids of vehicles in the network by position.""" 
-        ids = self.k.vehicle.get_ids()
-        rl_ids = []
-        for id in ids:
-            if id.startswith("RL"):
-                rl_ids.append(id)
-        return rl_ids
+        return self.k.vehicle.get_rl_ids()
     
     def apply_rl_actions(self, action):
         self._apply_rl_actions(action)

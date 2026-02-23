@@ -8,25 +8,20 @@
 - **Git commit**: ced4818
 - **Tensorboard dir**: tensorboard_logs/v0_1/ 
 - **Results**: 
-  - Collision rate: 
-  - Avg Speed:
-  - Avg Reward:
-  - Training time:
-- **Notes**: 
-  - Initially : speed_reward = 0.5 * (speed / max_speed). The dense reward was consistently very small caussing the entropy to outweight the reward and the policy optimizer to just continue taking random actions. I changed the reward scale to speed_reward = 2.0 * (speed / max_speed).
-  - Experiment Failed. Both SB3 and rllib could not learn a policy that made sense. My guess is the underlying environemnt is flawed. Swithcing to highway env
+  - Collision rate: 0.04 
+  - Avg Speed: 7.9
+  - Avg Reward: 16 
+  - Training time: 2M Steps
 
-## 2026-02-21: Highway env PPO (v0.2)
-- **Goal**: Setup highway_env Enviroment and Rllib training and ensure it is bug free and training works on a single agent using PPO
-- **Next steps**: Multi Agent Baseline. PPO with param sharing, 2 agents. 
-- **Config**: configs/v0_2_single_agent.py
+ ## 2026-02-11: MultiAgent agent Sanity Check (v0.2)
+- **Goal**: Train 2, 4 then 8 agents using PPO with parameter sharing
+- **Next steps**: All vehicles are agents. PPO with parameter sharing 
+- **Config**: configs/v0_2_multi_agent_sanity_check.py
 - **Env**: envs/alpha_env_v02.py 
 - **Git commit**: 
-- **Tensorboard dir**: 
+- **Tensorboard dir**: tensorboard_logs/v0_2/ 
 - **Results**: 
   - Collision rate: 
-  - Avg Speed:
-  - Avg Reward:
-  - Training time:
-- **Notes**: 
-   
+  - Avg Speed: 
+  - Avg Reward:  
+  - Training time:  
