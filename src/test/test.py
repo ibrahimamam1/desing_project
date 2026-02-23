@@ -11,7 +11,7 @@ from flow.utils.registry import make_create_env
 
 # Adjust imports based on your file structure
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from envs.alpha_env import AlphaEnv
+from envs.alpha_env_v01 import AlphaEnv_v01
 
 def run_sim(
         scenario_name,
@@ -75,7 +75,7 @@ def run_sim(
         
     flow_params = dict(
         exp_tag=myTag,
-        env_name=AlphaEnv,
+        env_name=AlphaEnv_v01,
         network=network,
         simulator='traci',
         sim=sim_params,
