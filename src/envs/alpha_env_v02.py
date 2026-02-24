@@ -1,5 +1,3 @@
-#============NEW ACCEL ENV ENVIRONMENT BY IBRAHIMA============
-
 import gymnasium as gym
 from gymnasium.spaces import Box
 import numpy as np
@@ -8,9 +6,9 @@ import os
 
 sys.path.append(os.path.dirname(__file__))
 
-from base_env_single import Env_N
+from base_env_multi import Env_Multi
 
-class AlphaEnv_v01(Env_N):
+class AlphaEnv_v02(Env_Multi):
     """
     Multi-Agent Alpha environment with stability fixes.
     """
@@ -42,26 +40,19 @@ class AlphaEnv_v01(Env_N):
             shape=(total_obs_len, ),
             dtype=np.float32)
 
-        self.last_action = 0.0
-        self.last_obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
+        # Multi-agent historical tracking
+        self.last_action = {}
+        self.last_obs = {}
 
-    def get_state(self):
+    def get_state(self, agent_id):
         """
-        Return the observation for the single RL agent.
-        Returns a flat np.array matching self.observation_space.
+        Return the observation for a specific RL agent.
         """
-        rl_ids = self.k.vehicle.get_rl_ids()
+        # Get current observation for this specific agent
+        obs = self._get_local_observation(agent_id)
         
-        # If the vehicle despawned (reached goal or crashed), return the 
-        # last valid observation to prevent value function spikes.
-        if not rl_ids:
-            return self.last_obs
-
-        # Get current observation
-        obs = self._get_local_observation(rl_ids[0])
-        
-        # Cache the valid observation for the terminal step
-        self.last_obs = obs
+        # Cache the valid observation
+        self.last_obs[agent_id] = obs
         
         return obs
 
@@ -93,8 +84,10 @@ class AlphaEnv_v01(Env_N):
         all_ids = self.k.vehicle.get_ids()
         
         pos_ret = self.k.vehicle.get_2d_position(ego_id)
+        if pos_ret == -1001 or pos_ret is None:
+             return self.last_obs.get(ego_id, np.zeros(self.observation_space.shape[0], dtype=np.float32))
+             
         ego_x, ego_y = pos_ret
-
 
         for other_id in all_ids:
             if other_id == ego_id:
@@ -161,23 +154,45 @@ class AlphaEnv_v01(Env_N):
         
         return np.array(obs_vector, dtype=np.float32)
 
-    def _apply_rl_actions(self, rl_action):
+    def _apply_rl_actions(self, rl_actions_dict):
+        """
+        Applies a dictionary of actions to their respective agents.
+        """
         max_accel = self.env_params.additional_params['max_accel']
         max_decel = self.env_params.additional_params['max_decel']
 
-        action_val = float(rl_action)
-        # Denormalize from [-1, 1] to [-max_decel, max_accel]
-        if action_val >= 0:
-            real_action = action_val * max_accel
-        else:
-            real_action = action_val * max_decel
+        target_ids = []
+        target_actions = []
 
-        rl_ids = self.sorted_ids
-        if not rl_ids:
-            return
-        self.k.vehicle.apply_acceleration(rl_ids, [real_action])
+        for agent_id, action in rl_actions_dict.items():
+            if agent_id not in self.k.vehicle.get_ids():
+                continue
+
+            # In gym, Box(1,) shape means action is usually an array/list
+            action_val = float(action[0]) if isinstance(action, (list, np.ndarray)) else float(action)
+            
+            # Denormalize from [-1, 1] to [-max_decel, max_accel]
+            if action_val >= 0:
+                real_action = action_val * max_accel
+            else:
+                real_action = action_val * max_decel
+            
+            target_ids.append(agent_id)
+            target_actions.append(real_action)
+
+        # Apply batch accelerations
+        if target_ids:
+            self.k.vehicle.apply_acceleration(target_ids, target_actions)
 
     def compute_reward(self, agent_id, fail, goal_reached, current_action=None):
+        """
+        Calculates the reward for a specific agent.
+        """
+        # Clean up cache on exit to prevent memory leaks in long episodes
+        if fail or goal_reached:
+            self.last_action.pop(agent_id, None)
+            self.last_obs.pop(agent_id, None)
+
         if fail:
             return -10.0  
         if goal_reached:
@@ -196,9 +211,13 @@ class AlphaEnv_v01(Env_N):
         # Action smoothness penalty
         action_penalty = 0.0
         if current_action is not None:
-            action_val = float(current_action[0])
-            action_penalty = -0.02 * abs(action_val - self.last_action)
-            self.last_action = action_val
+            action_val = float(current_action[0]) if isinstance(current_action, (list, np.ndarray)) else float(current_action)
+            
+            prev_action = self.last_action.get(agent_id, 0.0)
+            action_penalty = -0.02 * abs(action_val - prev_action)
+            
+            # Update cache for next step
+            self.last_action[agent_id] = action_val
         
         return speed_reward + time_penalty + action_penalty
 

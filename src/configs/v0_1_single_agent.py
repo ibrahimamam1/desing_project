@@ -44,7 +44,6 @@ warmup_steps = 5
 number_of_sim_steps_per_RlAction_step = 1
 RENDER_MODE = False
 
-
 ############### VEHICLE Configuration ##########################
 num_rl_vehicles      = 0
 num_non_rl_vehicles  = 0
@@ -93,9 +92,6 @@ vehicles.add(
 ############################# InFlow Configuration #########################
 inflow = InFlows()
 
-max_vehicle_count_in_inflow = 20
-num_inflows_vehicles = random.randint(1, max_vehicle_count_in_inflow)
-
 #### TRAFFIC RATES
 high = 500
 medium = 300
@@ -142,6 +138,15 @@ inflow.add(veh_type="NonRL",
 inflow.add(veh_type="RL",
            edge="E#L-X",
            probability=traffic_rate["W"]/3600,
+           depart_lane=0,
+           depart_speed=initial_speed,
+           begin=warmup_steps,
+           number=1,
+           color="red"
+           )
+inflow.add(veh_type="RL",
+           edge="E#T-X",
+           probability=traffic_rate["N"]/3600,
            depart_lane=0,
            depart_speed=initial_speed,
            begin=warmup_steps,
@@ -228,6 +233,7 @@ import ray
 from ray.tune.registry import register_env
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.algorithms.callbacks import DefaultCallbacks
+from ray.rllib.policy.policy import PolicySpec # <-- Added import
 from typing import Any, Dict
 
 class TrafficCallbacks(DefaultCallbacks):
@@ -242,7 +248,10 @@ class TrafficCallbacks(DefaultCallbacks):
         **kwargs,
     ) -> None:
         info = episode.last_info_for()
-        telemetry = info["telemetry"]
+        if info is None: # Safe guard for multi-agent
+            return
+            
+        telemetry = info.get("telemetry")
 
         if telemetry is None:
             return
@@ -283,13 +292,14 @@ class TrafficCallbacks(DefaultCallbacks):
             info = result["info"]
             if "learner" in info and isinstance(info["learner"], dict):
                 learner = info["learner"]
-                if "default_policy" in learner and isinstance(learner["default_policy"], dict):
+                # Adjusted for parameter sharing naming
+                if "shared_policy" in learner and isinstance(learner["shared_policy"], dict):
                     info_keep = {"entropy", "mean_kl_loss", "policy_loss", "total_loss", "vf_loss", "vf_explained_var"}
-                    info_keys_to_delete = [k for k in learner["default_policy"] if k not in info_keep]
+                    info_keys_to_delete = [k for k in learner["shared_policy"] if k not in info_keep]
                     for k in info_keys_to_delete:
-                        learner["default_policy"].pop(k)
+                        learner["shared_policy"].pop(k)
                  
-                info_keys_to_delete = [k for k in learner if k != "default_policy"]
+                info_keys_to_delete = [k for k in learner if k != "shared_policy"]
                 for k in info_keys_to_delete:
                     learner.pop(k) 
             
@@ -299,7 +309,7 @@ class TrafficCallbacks(DefaultCallbacks):
 
 def create_flow_env(env_config):
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from envs.alpha_env_v01 import AlphaEnv_v01
+    from envs.alpha_env_v02 import AlphaEnv_v02
 
     params       = flow_params
     _vehicles    = deepcopy(params["veh"])
@@ -317,7 +327,7 @@ def create_flow_env(env_config):
         initial_config=_initial_config,
         traffic_lights=traffic_lights,
     )
-    return AlphaEnv_v01(
+    return AlphaEnv_v02(
         env_params=params["env"],
         sim_params=_sim_params,
         network=network,
@@ -325,13 +335,18 @@ def create_flow_env(env_config):
         )
 
 
-register_env("alpha_env_v01", create_flow_env)
+register_env("alpha_env_v02", create_flow_env)
 
 def build_config(num_workers: int = 7, render: bool = False) -> PPOConfig:
         cfg = (
             PPOConfig()
             .environment(env="alpha_env_v01", env_config={"render": render}, disable_env_checking=True)
             .framework("torch")
+            .multi_agent(
+                policies={"shared_policy": PolicySpec()}, # RLlib infers spaces from the env automatically
+                policy_mapping_fn=lambda agent_id, episode, worker, **kwargs: "shared_policy",
+            )
+            # ------------------------------------------------
             .rollouts(
                 num_rollout_workers=num_workers,
                 rollout_fragment_length="auto",
@@ -342,8 +357,6 @@ def build_config(num_workers: int = 7, render: bool = False) -> PPOConfig:
                 sgd_minibatch_size=256,
                 num_sgd_iter=10,
                 
-                # --- CORRECTED RLlib 2.7 API ---
-                # Pass the schedule directly into 'lr' and 'entropy_coeff'
                 lr=[[0, 3e-4], [2_000_000, 1e-5]], 
                 entropy_coeff=[[0, 0.02], [2_000_000, 0.0]], 
                 
@@ -370,21 +383,22 @@ def build_config(num_workers: int = 7, render: bool = False) -> PPOConfig:
             .callbacks(TrafficCallbacks)
         )
         return cfg
+
 # ─────────────────────────────────────────────
 # Checkpoint helpers
 # ─────────────────────────────────────────────
-ENV_NAME  = "alpha_env_v01"
+ENV_NAME  = "alpha_env_v02"
 ALGO_NAME = "PPO"
 
 CHECKPOINT_ROOT = os.path.join(
     os.getcwd(),
-    "checkpoints/v0_1",
+    "checkpoints/v0_2",
     f"{ENV_NAME}_{ALGO_NAME}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
 )
 FINAL_MODEL_DIR = os.path.join(CHECKPOINT_ROOT, "final")
 BEST_CHECKPOINT_DIR = os.path.join(CHECKPOINT_ROOT, "best")
 
-TENSORBOARD_DIR = os.path.join(os.getcwd(), "tensorboard_logs/v0_1")
+TENSORBOARD_DIR = os.path.join(os.getcwd(), "tensorboard_logs/v0_2")
 RUN_NAME = f"flow_ppo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 TENSORBOARD_RUN_DIR = os.path.join(TENSORBOARD_DIR, RUN_NAME)
 
@@ -446,7 +460,8 @@ def evaluate(checkpoint_path: str, num_iterations: int = 20):
 
     rewards = []
     for episode in range(num_iterations):
-        obs, _ = env.reset()
+        # Multi-agent reset returns dicts
+        obs_dict, info_dict = env.reset()
         done = False
         total_reward = 0.0
         step = 0
@@ -454,19 +469,34 @@ def evaluate(checkpoint_path: str, num_iterations: int = 20):
         print(f"\n=== Episode {episode + 1} ===")
 
         while not done:
-            action = algo.compute_single_action(obs)
-            obs, reward, terminated, truncated, info = env.step(action)
-            done = terminated or truncated
-            total_reward += reward
+            action_dict = {}
+            
+            # --- NEW: Compute action for every active agent ---
+            for agent_id, obs in obs_dict.items():
+                action_dict[agent_id] = algo.compute_single_action(
+                    observation=obs,
+                    policy_id="shared_policy"
+                )
+            # --------------------------------------------------
+
+            obs_dict, reward_dict, terminateds, truncateds, infos = env.step(action_dict)
+            
+            # Global done flag checks the "__all__" key
+            done = terminateds.get("__all__", False) or truncateds.get("__all__", False)
+            
+            # Sum rewards across all active agents this step
+            step_reward = sum(reward_dict.values())
+            total_reward += step_reward
             step += 1
 
-            print(f"  Step {step:4d} | obs={obs} | action={action} | reward={reward:.4f}")
+            # Print a consolidated summary for the step instead of individual dicts to keep the console clean
+            print(f"  Step {step:4d} | Active Agents: {len(obs_dict)} | Step Reward: {step_reward:.4f}")
 
         print(f"  --> Episode total reward: {total_reward:.3f}")
         rewards.append(total_reward)
 
     avg = sum(rewards) / max(len(rewards), 1)
-    print(f"\n  Average reward over {num_iterations} episodes: {avg:.3f}")
+    print(f"\n  Average global reward over {num_iterations} episodes: {avg:.3f}")
     print("--- EVALUATION COMPLETE ---\n")
 
     ray.shutdown()
@@ -476,4 +506,3 @@ if __name__ == "__main__":
         train()
     else:
         evaluate(checkpoint_path=args.eval)
-
