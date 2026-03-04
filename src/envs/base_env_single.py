@@ -157,6 +157,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         self.telemetry = {
             "entry_times": {},      # {veh_id: float (time_step)}
             "travel_times": {},     # {veh_id: duration} (Only successful vehicles)
+            "waiting_times": {},    # {veh_id: duration} (All vehicles)
             "zone_durations": {},   # {veh_id: float} (All vehicles seen)
             "collisions": 0,
             "speeds": [],        
@@ -172,12 +173,19 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         # Get all vehicles currently in the network
         current_ids = self.k.vehicle.get_ids()
 
-        # 1. Track Entries
+        # Define threshold for "not moving" (0.1 m/s is standard SUMO halt threshold)
+        STOP_SPEED_THRESHOLD = 0.1 
+
+        # 1. Track Entries and Active Status
         for veh_id in current_ids:
             # If new vehicle, initialize trackers
             if veh_id not in self.telemetry["entry_times"]:
                 self.telemetry["entry_times"][veh_id] = current_time
                 self.telemetry["zone_durations"][veh_id] = 0.0
+                
+            # Initialize waiting time for new vehicles if not present
+            if veh_id not in self.telemetry["waiting_times"]:
+                self.telemetry["waiting_times"][veh_id] = 0.0
 
             # 2. Track Control Zone Time 
             if self._is_in_control_zone(veh_id):
@@ -186,8 +194,14 @@ class Env_N(gym.Env, metaclass=ABCMeta):
             speed = self.k.vehicle.get_speed(veh_id)
             accel = self.k.vehicle.get_accel(veh_id)
         
-            if speed is not None : # Avoid invalid values during crashes/teleports
+            if speed is not None: # Avoid invalid values during crashes/teleports
                 self.telemetry["speeds"].append(speed)
+                
+                # If speed is below threshold, add sim_step to waiting time
+                if speed < STOP_SPEED_THRESHOLD:
+                    self.telemetry["waiting_times"][veh_id] += self.sim_step
+                # --------------------------------
+
             if accel is not None:
                 self.telemetry["accelerations"].append(accel)
 
@@ -201,6 +215,9 @@ class Env_N(gym.Env, metaclass=ABCMeta):
                 
                 # Cleanup from entry tracker
                 del self.telemetry["entry_times"][veh_id]
+                
+                # NOTE: We do NOT delete from self.telemetry["waiting_times"] 
+                # because we want to keep the record for the final stats.
 
         # 4. Track Collisions (RL vehicles only)
         colliding_ids = self.k.kernel_api.simulation.getCollidingVehiclesIDList()
@@ -210,7 +227,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
 
     def _compute_telemetry_stats(self):
         """
-        Returns the raw per-vehicle dictionaries for ONLY successful vehicles.
+        Returns the raw per-vehicle dictionaries.
         Called only when terminated is True.
         """
         import numpy as np
@@ -232,6 +249,9 @@ class Env_N(gym.Env, metaclass=ABCMeta):
             
             # Successful vehicles only
             "per_vehicle_travel_times": self.telemetry["travel_times"],
+            
+            # All vehicles (entered)
+            "per_vehicle_waiting_times": self.telemetry["waiting_times"], 
             
             # Successful vehicles only (Filtered)
             "per_vehicle_zone_times": filtered_zone_times,

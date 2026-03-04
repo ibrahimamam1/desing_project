@@ -14,9 +14,9 @@
   - Training time: 2M Steps
 
  ## 2026-02-11: MultiAgent agent Sanity Check (v0.2)
-- **Goal**: Train 2, 4 then 8 agents using PPO with parameter sharing
-- **Next steps**: All vehicles are agents. PPO with parameter sharing 
-- **Config**: configs/v0_2_multi_agent_sanity_check.py
+- **Goal**: Train 2, 4, 8 then all_vehicles as agents using PPO with parameter sharing
+- **Next steps**: Add the attention mecanism as collision detection and input to the PPO Network
+- **Config**: configs/v0_2_multi_agent.py
 - **Env**: envs/alpha_env_v02.py 
 - **Git commit**: 
 - **Tensorboard dir**: tensorboard_logs/v0_2/ 

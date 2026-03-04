@@ -4,86 +4,109 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from glob import glob
-from pathlib import Path
 import warnings
+
 warnings.filterwarnings('ignore')
 
-# Set up plotting
 plt.rcParams['figure.figsize'] = (12, 6)
 plt.rcParams['font.size'] = 10
 sns.set_style("whitegrid")
 sns.set_palette("Set2")
 
-# Get paths
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-results_dir = os.path.join(root_dir, "results")
-output_dir = os.path.join(root_dir, "plots")
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+root_dir    = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+results_dir = os.path.join(root_dir, "output")
+output_dir  = os.path.join(root_dir, "plots")
 os.makedirs(output_dir, exist_ok=True)
 
 print(f"Results directory: {results_dir}")
-print(f"Output directory: {output_dir}")
+print(f"Output  directory: {output_dir}")
 
-# Scenarios and intentions reference
+# ---------------------------------------------------------------------------
+# Reference maps
+# ---------------------------------------------------------------------------
 SCENARIOS_MAP = {
-    'fixed_tl': 'Fixed TL',
-    'adaptive_tl': 'Adaptive TL', 
-    'rbl': 'Right Before Left'
+    'allway_stop': 'Allway Stop',
+    'fixed_tl':    'Fixed TL',
+    'rbl':         'Right Before Left',
 }
 
 INTENTIONS_MAP = {
-    'all_straight': 'All Straight',
-    'all_left': 'All Left',
-    'uniform_random': 'Uniform Random',
-    'assymetric_random': 'Asymmetric Random'
+    'all_straight':      'All Straight',
+    'all_left':          'All Left',
+    'uniform_random':    'Uniform Random',
+    'assymetric_random': 'Asymmetric Random',
 }
 
 SCENARIO_COLORS = {
-    'fixed_tl': '#e74c3c',
-    'adaptive_tl': '#3498db',
-    'rbl': '#2ecc71'
+    'allway_stop': '#9b59b6',
+    'fixed_tl':    '#e74c3c',
+    'rbl':         '#2ecc71',
 }
 
-def parse_filename(filename):
-    """Parse CSV filename to extract metadata"""
-    basename = os.path.basename(filename).replace('.csv', '')
+# ---------------------------------------------------------------------------
+# Metric config  —  each metric maps to three CSV columns: _min / _avg / _max
+# ---------------------------------------------------------------------------
+METRIC_CONFIG = {
+    'travel_time': {
+        'label':           'Travel Time (s)',
+        'title':           'Travel Time',
+        'filename_prefix': 'travel_time',
+        'col_avg':         'travel_time_avg',
+        'col_min':         'travel_time_min',
+        'col_max':         'travel_time_max',
+    },
+    'waiting_time': {
+        'label':           'Waiting Time (s)',
+        'title':           'Waiting Time',
+        'filename_prefix': 'waiting_time',
+        'col_avg':         'waiting_time_avg',
+        'col_min':         'waiting_time_min',
+        'col_max':         'waiting_time_max',
+    },
+}
 
-    scenarios = ['fixed_tl', 'adaptive_tl', 'rbl']
-    intentions = ['all_straight', 'all_left', 'uniform_random', 'assymetric_random']
+
+# ---------------------------------------------------------------------------
+# Filename parser
+# ---------------------------------------------------------------------------
+def parse_filename(filename):
+    basename   = os.path.basename(filename).replace('.csv', '')
+    scenarios  = list(SCENARIOS_MAP.keys())
+    intentions = list(INTENTIONS_MAP.keys())
 
     scenario = None
-    intention = None
-
-    # Extract scenario
+    remaining = basename
     for scen in scenarios:
         if scen in basename:
-            scenario = scen
+            scenario  = scen
             remaining = basename.replace(scen, '').strip('_')
             break
 
-    # Extract intention
-    if scenario:
-        for intent in intentions:
-            if intent in remaining:
-                intention = intent
-                traffic_rate = remaining.replace(intent, '').strip('_')
-                break
-        else:
-            traffic_rate = remaining
-    else:
-        traffic_rate = basename
+    intention    = None
+    traffic_rate = remaining
+    for intent in intentions:
+        if intent in remaining:
+            intention    = intent
+            traffic_rate = remaining.replace(intent, '').strip('_')
+            break
 
-    return {
-        'scenario': scenario,
-        'intention': intention,
-        'traffic_rate': traffic_rate,
-        'group_name': basename
-    }
+    return {'scenario': scenario, 'intention': intention,
+            'traffic_rate': traffic_rate, 'group_name': basename}
 
+
+# ---------------------------------------------------------------------------
+# Data loader
+# New format: one row per run, columns:
+#   run, n_vehicles,
+#   travel_time_min, travel_time_avg, travel_time_max,
+#   waiting_time_min, waiting_time_avg, waiting_time_max
+# ---------------------------------------------------------------------------
 def load_data():
-    """Load all CSV files and combine into single DataFrame"""
     csv_files = glob(os.path.join(results_dir, "*.csv"))
     print(f"Found {len(csv_files)} CSV files")
-
     if not csv_files:
         print("No CSV files found!")
         return None
@@ -92,456 +115,419 @@ def load_data():
     for csv_file in csv_files:
         try:
             meta = parse_filename(csv_file)
-            df = pd.read_csv(csv_file)
-
-            # Add metadata
-            df['scenario'] = meta['scenario']
-            df['intention'] = meta['intention']
+            df   = pd.read_csv(csv_file)
+            for col in ['travel_time_min', 'travel_time_avg', 'travel_time_max',
+                        'waiting_time_min', 'waiting_time_avg', 'waiting_time_max',
+                        'n_vehicles']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            df['scenario']     = meta['scenario']
+            df['intention']    = meta['intention']
             df['traffic_rate'] = meta['traffic_rate']
-            df['group_name'] = meta['group_name']
-
+            df['group_name']   = meta['group_name']
             all_data.append(df)
-
         except Exception as e:
             print(f"Error loading {csv_file}: {e}")
 
-    if all_data:
-        combined = pd.concat(all_data, ignore_index=True)
-        print(f"Loaded {len(combined)} total records")
-        return combined
-    return None
+    if not all_data:
+        return None
 
-# =============================================================================
-# PLOT 1: Per Intention, Per Scenario Group Bar Charts - 4 SUBPLOTS IN 1 FIGURE
-# =============================================================================
-def plot_intention_scenario_bars(df):
-    """
-    Single figure with 4 subplots (2x2 grid).
-    Each subplot shows one intention with 7 scenarios on x-axis, 
-    grouped bars for 3 control types.
-    """
-    intentions = df['intention'].dropna().unique()
+    combined = pd.concat(all_data, ignore_index=True)
+    print(f"Loaded {len(combined)} runs across {len(csv_files)} groups")
+    return combined
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _clean(df, metric):
+    return df.dropna(subset=[METRIC_CONFIG[metric]['col_avg']])
+
+def _save(fig, filename):
+    plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+    print(f"Saved: {filename}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# PLOT 1 — Bar chart with min–max error bars
+#   avg bar height = mean of per-run _avg values
+#   error bars     = global _min to global _max across all runs in cell
+# ---------------------------------------------------------------------------
+def plot_intention_scenario_bars(df, metric):
+    cfg      = METRIC_CONFIG[metric]
+    col_avg, col_min, col_max = cfg['col_avg'], cfg['col_min'], cfg['col_max']
+    df_clean  = _clean(df, metric)
+    intentions = [i for i in INTENTIONS_MAP if i in df_clean['intention'].values]
+    scenario_order = [s for s in SCENARIOS_MAP if s in df_clean['scenario'].values]
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     axes = axes.flatten()
 
-    scenario_order = ['fixed_tl', 'adaptive_tl', 'rbl']
-
     for idx, intention in enumerate(intentions):
+        if idx >= len(axes): break
         ax = axes[idx]
-        intent_data = df[df['intention'] == intention]
+        grp = (df_clean[df_clean['intention'] == intention]
+               .groupby(['traffic_rate', 'scenario'])
+               .agg(bar=(col_avg, 'mean'), lo=(col_min, 'min'), hi=(col_max, 'max'))
+               .reset_index())
 
-        # Group by traffic_rate and scenario, calculate mean travel time
-        grouped = intent_data.groupby(['traffic_rate', 'scenario'])['travel_time'].mean().reset_index()
+        pivot_bar = grp.pivot(index='traffic_rate', columns='scenario', values='bar')
+        pivot_lo  = grp.pivot(index='traffic_rate', columns='scenario', values='lo')
+        pivot_hi  = grp.pivot(index='traffic_rate', columns='scenario', values='hi')
 
-        # Pivot for plotting
-        pivot = grouped.pivot(index='traffic_rate', columns='scenario', values='travel_time')
+        for p in (pivot_bar, pivot_lo, pivot_hi):
+            p = p.reindex(columns=[s for s in scenario_order if s in p.columns])
 
-        # Reorder columns for consistent colors
-        pivot = pivot.reindex(columns=[s for s in scenario_order if s in pivot.columns])
-
-        # Plot
-        x = np.arange(len(pivot.index))
+        x     = np.arange(len(pivot_bar.index))
         width = 0.25
+        n_cols = len([s for s in scenario_order if s in pivot_bar.columns])
 
-        for i, col in enumerate(pivot.columns):
-            offset = width * (i - 1)
-            bars = ax.bar(x + offset, pivot[col], width, 
-                          label=SCENARIOS_MAP[col], color=SCENARIO_COLORS[col])
+        for i, col in enumerate([s for s in scenario_order if s in pivot_bar.columns]):
+            offset  = width * (i - (n_cols - 1) / 2)
+            heights = pivot_bar[col].fillna(0).values
+            lo      = np.where(np.isnan(pivot_lo[col].values), 0,
+                               heights - pivot_lo[col].values)
+            hi      = np.where(np.isnan(pivot_hi[col].values), 0,
+                               pivot_hi[col].values - heights)
+            ax.bar(x + offset, heights, width,
+                   label=SCENARIOS_MAP.get(col, col),
+                   color=SCENARIO_COLORS.get(col, '#333'),
+                   yerr=[lo, hi], capsize=3,
+                   error_kw=dict(elinewidth=1, alpha=0.6))
 
         ax.set_xlabel('Traffic Scenario', fontsize=10, fontweight='bold')
-        ax.set_ylabel('Avg Travel Time (s)', fontsize=10, fontweight='bold')
-        ax.set_title(f'{INTENTIONS_MAP.get(intention, intention)}', 
-                     fontsize=12, fontweight='bold', pad=10)
+        ax.set_ylabel(f'Avg {cfg["label"]}', fontsize=10, fontweight='bold')
+        ax.set_title(INTENTIONS_MAP.get(intention, intention), fontsize=12, fontweight='bold')
         ax.set_xticks(x)
-        ax.set_xticklabels(pivot.index, rotation=45, ha='right', fontsize=8)
+        ax.set_xticklabels(pivot_bar.index, rotation=45, ha='right', fontsize=8)
         ax.legend(title='Control Type', fontsize=8)
         ax.grid(axis='y', alpha=0.3)
 
-    fig.suptitle('Traffic Controller Performance on each scenario\n(Grouped by Intention)', 
-                  fontsize=16, fontweight='bold', y=0.98)
+    for idx in range(len(intentions), len(axes)):
+        axes[idx].set_visible(False)
+
+    fig.suptitle(f'{cfg["title"]} — avg ± [min, max] per run\n(Grouped by Intention)',
+                 fontsize=15, fontweight='bold', y=0.98)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    filename = "1A_intention_scenario_bars.png"
-    plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
-    print(f"Saved: {filename}")
-    plt.close()
+    _save(fig, f"{cfg['filename_prefix']}_1A_intention_scenario_bars.png")
 
-# =============================================================================
-# PLOT 2: Per Intention, Per Scenario HEATMAP
-# =============================================================================
 
-def plot_control_type_heatmaps(df):
-    """
-    Three heatmaps side by side, one for each control type.
-    Y-axis: Intentions
-    X-axis: Traffic scenarios
-    Values: Average travel time
-    """
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    
-    scenarios = ['fixed_tl', 'adaptive_tl', 'rbl']
-    
-    # Find global min for consistent color scale
-    vmin = df['travel_time'].min()
-    
+# ---------------------------------------------------------------------------
+# PLOT 2 — Heatmap per scenario: avg value by intention × traffic_rate
+# ---------------------------------------------------------------------------
+def plot_control_type_heatmaps(df, metric):
+    cfg      = METRIC_CONFIG[metric]
+    col_avg  = cfg['col_avg']
+    df_clean  = _clean(df, metric)
+    scenarios = [s for s in SCENARIOS_MAP if s in df_clean['scenario'].values]
+
+    fig, axes = plt.subplots(1, len(scenarios), figsize=(6 * len(scenarios), 6))
+    if len(scenarios) == 1:
+        axes = [axes]
+
+    vmin = df_clean[col_avg].min()
+    vmax = df_clean.groupby(['intention', 'traffic_rate'])[col_avg].mean().max()
+
     for idx, scenario in enumerate(scenarios):
-        ax = axes[idx]
-        
-        # Filter data for this control type
-        scenario_data = df[df['scenario'] == scenario]
-        
-        # Create pivot table: intentions (rows) x traffic_rates (columns)
-        pivot = scenario_data.groupby(['intention', 'traffic_rate'])['travel_time'].mean().unstack()
-        
-        # Calculate vmax as the maximum of the grouped means for this specific heatmap
-        vmax = pivot.max().max()
-        
-        # Map intention names for display
+        ax    = axes[idx]
+        pivot = (df_clean[df_clean['scenario'] == scenario]
+                 .groupby(['intention', 'traffic_rate'])[col_avg].mean()
+                 .unstack())
         pivot.index = [INTENTIONS_MAP.get(i, i) for i in pivot.index]
-        
-        # Sort traffic rates if they're numeric-like
         try:
-            sorted_cols = sorted(pivot.columns, key=lambda x: float(x) if x.replace('.','').isdigit() else x)
-            pivot = pivot[sorted_cols]
-        except:
+            pivot = pivot[sorted(pivot.columns,
+                                 key=lambda x: float(x) if str(x).replace('.','').isdigit() else x)]
+        except Exception:
             pass
-        
-        # Create heatmap
-        sns.heatmap(pivot, annot=True, fmt='.1f', cmap='YlOrRd', 
-                    ax=ax, cbar_kws={'label': 'Travel Time (s)'}, 
-                    linewidths=0.5, vmin=vmin, vmax=vmax)
-        
-        ax.set_title(f'{SCENARIOS_MAP[scenario]}', 
-                     fontsize=13, fontweight='bold', pad=10)
+        sns.heatmap(pivot, annot=True, fmt='.1f', cmap='YlOrRd', ax=ax,
+                    cbar_kws={'label': cfg['label']}, linewidths=0.5,
+                    vmin=vmin, vmax=vmax)
+        ax.set_title(SCENARIOS_MAP.get(scenario, scenario), fontsize=13, fontweight='bold')
         ax.set_xlabel('Traffic Scenario', fontsize=11, fontweight='bold')
-        
-        # Only show y-label on leftmost plot
-        if idx == 0:
-            ax.set_ylabel('Intention Type', fontsize=11, fontweight='bold')
-        else:
-            ax.set_ylabel('')
-        
-        # Rotate x-axis labels
+        ax.set_ylabel('Intention Type' if idx == 0 else '', fontsize=11, fontweight='bold')
         ax.tick_params(axis='x', rotation=45, labelsize=9)
-        ax.tick_params(axis='y', rotation=0, labelsize=10)
-    
-    fig.suptitle('Heatmap showing how intention and scenario affect travel time', 
+        ax.tick_params(axis='y', rotation=0,  labelsize=10)
+
+    fig.suptitle(f'Heatmap: avg {cfg["title"]} by Intention & Traffic Rate',
                  fontsize=15, fontweight='bold', y=1.02)
-    
     plt.tight_layout()
-    filename = "1B_intention_scenario_heatmaps.png"
-    plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
-    print(f"Saved: {filename}")
-    plt.close()
+    _save(fig, f"{cfg['filename_prefix']}_1B_intention_scenario_heatmaps.png")
 
 
-# =============================================================================
-# PLOT 3: Travel Time Heatmap
-# =============================================================================
-def plot_heatmap(df):
-    """
-    Comprehensive heatmap showing travel time for all combinations.
-    """
+# ---------------------------------------------------------------------------
+# PLOT 3 — Summary heatmaps (intention vs scenario, and detailed)
+# ---------------------------------------------------------------------------
+def plot_heatmap(df, metric):
+    cfg     = METRIC_CONFIG[metric]
+    col_avg = cfg['col_avg']
+    df_clean = _clean(df, metric)
+
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-    # Heatmap 1: Average travel time by intention and scenario (averaged across traffic rates)
-    pivot1 = df.groupby(['intention', 'scenario'])['travel_time'].mean().unstack()
-    pivot1.index = [INTENTIONS_MAP.get(i, i) for i in pivot1.index]
+    pivot1         = df_clean.groupby(['intention', 'scenario'])[col_avg].mean().unstack()
+    pivot1.index   = [INTENTIONS_MAP.get(i, i) for i in pivot1.index]
     pivot1.columns = [SCENARIOS_MAP.get(c, c) for c in pivot1.columns]
-    
-    # Calculate vmax for this heatmap
-    vmax1 = pivot1.max().max()
-
-    sns.heatmap(pivot1, annot=True, fmt='.1f', cmap='YlOrRd', 
-                ax=axes[0], cbar_kws={'label': 'Travel Time (s)'}, linewidths=0.5,
-                vmax=vmax1)
-    axes[0].set_title('Travel Time Heatmap\n(Intention vs Control Type)', 
-                      fontsize=12, fontweight='bold')
+    sns.heatmap(pivot1, annot=True, fmt='.1f', cmap='YlOrRd', ax=axes[0],
+                cbar_kws={'label': cfg['label']}, linewidths=0.5)
+    axes[0].set_title(f'{cfg["title"]} — Intention vs Control Type', fontsize=12, fontweight='bold')
     axes[0].set_xlabel('Control Type', fontsize=11)
-    axes[0].set_ylabel('Intention', fontsize=11)
+    axes[0].set_ylabel('Intention',    fontsize=11)
 
-    # Heatmap 2: Include traffic scenarios as well (more detailed)
-    df['scenario_traffic'] = df['scenario'] + ' | ' + df['traffic_rate']
-    pivot2 = df.groupby(['intention', 'scenario_traffic'])['travel_time'].mean().unstack()
+    df_temp = df_clean.copy()
+    df_temp['scenario_traffic'] = df_temp['scenario'] + ' | ' + df_temp['traffic_rate'].astype(str)
+    pivot2       = df_temp.groupby(['intention', 'scenario_traffic'])[col_avg].mean().unstack()
     pivot2.index = [INTENTIONS_MAP.get(i, i) for i in pivot2.index]
-    
-    # Calculate vmax for this heatmap
-    vmax2 = pivot2.max().max()
-
-    sns.heatmap(pivot2, annot=False, fmt='.1f', cmap='YlOrRd', 
-                ax=axes[1], cbar_kws={'label': 'Travel Time (s)'}, vmax=vmax2)
-    axes[1].set_title('Summary of traffic controller performance for all intentions and scenarios', 
-                      fontsize=12, fontweight='bold')
+    sns.heatmap(pivot2, annot=False, cmap='YlOrRd', ax=axes[1],
+                cbar_kws={'label': cfg['label']})
+    axes[1].set_title(f'{cfg["title"]} — Detailed (Control + Traffic Rate)', fontsize=12, fontweight='bold')
     axes[1].set_xlabel('Control Type + Traffic Rate', fontsize=11)
     axes[1].set_ylabel('Intention', fontsize=11)
     axes[1].tick_params(axis='x', rotation=90, labelsize=7)
 
     plt.tight_layout()
-    filename = "3_summary_heatmap.png"
-    plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
-    print(f"Saved: {filename}")
-    plt.close()
+    _save(fig, f"{cfg['filename_prefix']}_3_summary_heatmap.png")
 
 
-# =============================================================================
-# PLOT 4: Per Scenario Box Plots and CDF - FIXED
-# =============================================================================
-def plot_scenario_boxplots_and_cdf(df):
-    """Box plots and CDF for each scenario"""
-    scenarios = df['scenario'].dropna().unique()
-    n_scen = len(scenarios)
-    
-    # Create figure with box plots on top row and single CDF plot on bottom
-    fig = plt.figure(figsize=(max(4*n_scen, 12), 10))
-    
-    # Create grid: top row for box plots, bottom row for single CDF
-    gs = fig.add_gridspec(2, 1, height_ratios=[1, 1], hspace=0.3)
-    
-    # Top subplot for box plots
-    ax_box_container = fig.add_subplot(gs[0])
-    ax_box_container.axis('off')
-    
-    # Create individual box plot axes
-    box_axes = []
-    for i in range(n_scen):
-        ax = fig.add_axes([0.1 + i*(0.8/n_scen), 0.55, 0.8/n_scen*0.9, 0.35])
-        box_axes.append(ax)
-    
-    # Plot box plots
+# ---------------------------------------------------------------------------
+# PLOT 4 — Box plots + CDF per scenario
+#   Each data point is one run's _avg value.
+#   Box shows variability across the 42 runs.
+# ---------------------------------------------------------------------------
+def plot_scenario_boxplots_and_cdf(df, metric):
+    cfg      = METRIC_CONFIG[metric]
+    col_avg  = cfg['col_avg']
+    df_clean  = _clean(df, metric)
+    scenarios = [s for s in SCENARIOS_MAP if s in df_clean['scenario'].values]
+    n_scen    = len(scenarios)
+
+    fig = plt.figure(figsize=(max(4 * n_scen, 12), 10))
+    gs  = fig.add_gridspec(2, 1, height_ratios=[1, 1], hspace=0.35)
+    fig.add_subplot(gs[0]).axis('off')
+
+    box_axes = [fig.add_axes([0.1 + i*(0.8/n_scen), 0.55, 0.8/n_scen*0.9, 0.35])
+                for i in range(n_scen)]
+
     for idx, scenario in enumerate(scenarios):
-        scen_data = df[df['scenario'] == scenario]['travel_time'].dropna()
-        color = SCENARIO_COLORS.get(scenario, '#95a5a6')
-        mean_val = scen_data.mean()
-        
-        # Box plot - STANDARD
-        ax_box = box_axes[idx]
-        bp = ax_box.boxplot(scen_data, 
-                            patch_artist=True,
-                            widths=0.5,
-                            showfliers=True,
-                            boxprops=dict(facecolor=color, alpha=0.7),
-                            medianprops=dict(color='black', linewidth=2),
-                            whiskerprops=dict(color='black', linewidth=1.5),
-                            capprops=dict(color='black', linewidth=1.5),
-                            flierprops=dict(marker='o', markersize=3, alpha=0.5))
-        
-        # Add mean as a star
-        ax_box.plot(1, mean_val, marker='*', color='red', markersize=15, 
-                   markeredgecolor='darkred', markeredgewidth=1.5, zorder=3,
-                   label=f'Mean: {mean_val:.1f}s')
-        
-        ax_box.set_title(f'{SCENARIOS_MAP.get(scenario, scenario)}', 
-                         fontsize=11, fontweight='bold')
-        ax_box.set_ylabel('Travel Time (s)', fontsize=10)
-        ax_box.grid(axis='y', alpha=0.3)
-        ax_box.set_ylim(0, 200)
-        ax_box.set_xticklabels([''])
-        ax_box.legend(loc='upper right', fontsize=8)
-    
-    # Single CDF plot (bottom row)
+        data     = df_clean[df_clean['scenario'] == scenario][col_avg].dropna()
+        color    = SCENARIO_COLORS.get(scenario, '#95a5a6')
+        mean_val = data.mean()
+        ax       = box_axes[idx]
+        ax.boxplot(data, patch_artist=True, widths=0.5, showfliers=True,
+                   boxprops=dict(facecolor=color, alpha=0.7),
+                   medianprops=dict(color='black', linewidth=2),
+                   whiskerprops=dict(color='black', linewidth=1.5),
+                   capprops=dict(color='black', linewidth=1.5),
+                   flierprops=dict(marker='o', markersize=3, alpha=0.5))
+        ax.plot(1, mean_val, marker='*', color='red', markersize=15,
+                markeredgecolor='darkred', markeredgewidth=1.5, zorder=3,
+                label=f'Mean: {mean_val:.1f}s')
+        ax.set_title(SCENARIOS_MAP.get(scenario, scenario), fontsize=11, fontweight='bold')
+        ax.set_ylabel(cfg['label'], fontsize=10)
+        ax.grid(axis='y', alpha=0.3)
+        ax.set_xticklabels([''])
+        ax.legend(loc='upper right', fontsize=8)
+
     ax_cdf = fig.add_subplot(gs[1])
-    
-    for idx, scenario in enumerate(scenarios):
-        scen_data = df[df['scenario'] == scenario]['travel_time'].dropna()
-        color = SCENARIO_COLORS.get(scenario, '#95a5a6')
-        sorted_data = np.sort(scen_data)
-        cdf = np.arange(1, len(sorted_data) + 1) / len(sorted_data)
-        
-        ax_cdf.plot(sorted_data, cdf, linewidth=2.5, color=color, 
-                   label=SCENARIOS_MAP.get(scenario, scenario))
-    
-    ax_cdf.set_xlabel('Travel Time (s)', fontsize=12)
+    for scenario in scenarios:
+        data = np.sort(df_clean[df_clean['scenario'] == scenario][col_avg].dropna())
+        cdf  = np.arange(1, len(data) + 1) / len(data)
+        ax_cdf.plot(data, cdf, linewidth=2.5,
+                    color=SCENARIO_COLORS.get(scenario, '#95a5a6'),
+                    label=SCENARIOS_MAP.get(scenario, scenario))
+    ax_cdf.set_xlabel(cfg['label'], fontsize=12)
     ax_cdf.set_ylabel('CDF', fontsize=12)
-    ax_cdf.set_xlim(0, 250)
     ax_cdf.set_ylim(0, 1)
     ax_cdf.grid(alpha=0.3)
-    ax_cdf.set_title('Cumulative Distribution Functions - All Scenarios', 
-                     fontsize=12, fontweight='bold')
+    ax_cdf.set_title(f'CDF — {cfg["title"]} (All Scenarios)', fontsize=12, fontweight='bold')
     ax_cdf.legend(loc='lower right', fontsize=10, framealpha=0.9)
-    
-    fig.suptitle('Travel time distribution by controller type on all scenarios + intentions', 
+
+    fig.suptitle(f'{cfg["title"]} Distribution by Controller Type\n'
+                 f'(each point = one run\'s avg; box = spread across {42} runs)',
                  fontsize=14, fontweight='bold', y=0.98)
-    
-    filename = "4_scenario_boxplot_cdf.png"
-    plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
-    print(f"Saved: {filename}")
-    plt.close()
+    _save(fig, f"{cfg['filename_prefix']}_4_scenario_boxplot_cdf.png")
 
 
-# =============================================================================
-# PLOT 4: Per Intention Box Plots and CDF - FIXED BOX PLOTS (NO FANCINESS)
-# =============================================================================
-def plot_intention_boxplots_and_cdf(df):
-    """
-    Box plots and CDF for each intention.
-    Box plots show: min, 1st quartile, median, 3rd quartile, max (standard).
-    All CDFs plotted on a single plot for easy comparison.
-    """
-    intentions = df['intention'].dropna().unique()
-    n_intents = len(intentions)
-    
-    # Create figure with box plots on top row and single CDF plot on bottom
-    fig = plt.figure(figsize=(max(4*n_intents, 12), 10))
-    
-    # Create grid: top row for box plots, bottom row for single CDF
-    gs = fig.add_gridspec(2, 1, height_ratios=[1, 1], hspace=0.3)
-    
-    # Top subplot for box plots
-    ax_box_container = fig.add_subplot(gs[0])
-    ax_box_container.axis('off')
-    
-    # Create individual box plot axes
-    box_axes = []
-    for i in range(n_intents):
-        ax = fig.add_axes([0.1 + i*(0.8/n_intents), 0.55, 0.8/n_intents*0.9, 0.35])
-        box_axes.append(ax)
-    
-    colors = sns.color_palette("Set2", n_intents)
-    
-    # Plot box plots
+# ---------------------------------------------------------------------------
+# PLOT 5 — Box plots + CDF per intention
+# ---------------------------------------------------------------------------
+def plot_intention_boxplots_and_cdf(df, metric):
+    cfg      = METRIC_CONFIG[metric]
+    col_avg  = cfg['col_avg']
+    df_clean   = _clean(df, metric)
+    intentions = [i for i in INTENTIONS_MAP if i in df_clean['intention'].values]
+    n_intents  = len(intentions)
+    colors     = sns.color_palette("Set2", n_intents)
+
+    fig = plt.figure(figsize=(max(4 * n_intents, 12), 10))
+    gs  = fig.add_gridspec(2, 1, height_ratios=[1, 1], hspace=0.35)
+    fig.add_subplot(gs[0]).axis('off')
+
+    box_axes = [fig.add_axes([0.1 + i*(0.8/n_intents), 0.55, 0.8/n_intents*0.9, 0.35])
+                for i in range(n_intents)]
+
     for idx, intention in enumerate(intentions):
-        intent_data = df[df['intention'] == intention]['travel_time'].dropna()
-        mean_val = intent_data.mean()
-        
-        # Box plot (top row) - STANDARD BOX PLOT
-        ax_box = box_axes[idx]
-        bp = ax_box.boxplot(intent_data, 
-                            patch_artist=True,
-                            widths=0.5,
-                            showfliers=True,  # Show outliers as points
-                            boxprops=dict(facecolor=colors[idx], alpha=0.7),
-                            medianprops=dict(color='black', linewidth=2),
-                            whiskerprops=dict(color='black', linewidth=1.5),
-                            capprops=dict(color='black', linewidth=1.5),
-                            flierprops=dict(marker='o', markersize=3, alpha=0.5))
-        
-        # Add mean as an orange star
-        ax_box.plot(1, mean_val, marker='*', color='orange', markersize=15, 
-                   markeredgecolor='darkorange', markeredgewidth=1.5, zorder=3,
-                   label=f'Mean: {mean_val:.1f}s')
-        
-        ax_box.set_title(f'{INTENTIONS_MAP.get(intention, intention)}', 
-                         fontsize=11, fontweight='bold')
-        ax_box.set_ylabel('Travel Time (s)', fontsize=10)
-        ax_box.grid(axis='y', alpha=0.3)
-        ax_box.set_ylim(0, 200)
-        ax_box.set_xticklabels([''])
-        ax_box.legend(loc='upper right', fontsize=8)
-    
-    # Single CDF plot (bottom row)
+        data     = df_clean[df_clean['intention'] == intention][col_avg].dropna()
+        mean_val = data.mean()
+        ax       = box_axes[idx]
+        ax.boxplot(data, patch_artist=True, widths=0.5, showfliers=True,
+                   boxprops=dict(facecolor=colors[idx], alpha=0.7),
+                   medianprops=dict(color='black', linewidth=2),
+                   whiskerprops=dict(color='black', linewidth=1.5),
+                   capprops=dict(color='black', linewidth=1.5),
+                   flierprops=dict(marker='o', markersize=3, alpha=0.5))
+        ax.plot(1, mean_val, marker='*', color='orange', markersize=15,
+                markeredgecolor='darkorange', markeredgewidth=1.5, zorder=3,
+                label=f'Mean: {mean_val:.1f}s')
+        ax.set_title(INTENTIONS_MAP.get(intention, intention), fontsize=11, fontweight='bold')
+        ax.set_ylabel(cfg['label'], fontsize=10)
+        ax.grid(axis='y', alpha=0.3)
+        ax.set_xticklabels([''])
+        ax.legend(loc='upper right', fontsize=8)
+
     ax_cdf = fig.add_subplot(gs[1])
-    
     for idx, intention in enumerate(intentions):
-        intent_data = df[df['intention'] == intention]['travel_time'].dropna()
-        sorted_data = np.sort(intent_data)
-        cdf = np.arange(1, len(sorted_data) + 1) / len(sorted_data)
-        
-        ax_cdf.plot(sorted_data, cdf, linewidth=2.5, color=colors[idx], 
-                   label=INTENTIONS_MAP.get(intention, intention))
-    
-    ax_cdf.set_xlabel('Travel Time (s)', fontsize=12)
+        data = np.sort(df_clean[df_clean['intention'] == intention][col_avg].dropna())
+        cdf  = np.arange(1, len(data) + 1) / len(data)
+        ax_cdf.plot(data, cdf, linewidth=2.5, color=colors[idx],
+                    label=INTENTIONS_MAP.get(intention, intention))
+    ax_cdf.set_xlabel(cfg['label'], fontsize=12)
     ax_cdf.set_ylabel('CDF', fontsize=12)
-    ax_cdf.set_xlim(0, 250)
     ax_cdf.set_ylim(0, 1)
     ax_cdf.grid(alpha=0.3)
-    ax_cdf.set_title('Travel Time distribution for each intention(all the scenarios summarised)', 
-                     fontsize=12, fontweight='bold')
+    ax_cdf.set_title(f'{cfg["title"]} Distribution (CDF)', fontsize=12, fontweight='bold')
     ax_cdf.legend(loc='lower right', fontsize=10, framealpha=0.9)
-    
-    fig.suptitle('Travel Time Distribution by Intention(all controllers + all scenarios)\n)', 
+
+    fig.suptitle(f'{cfg["title"]} Distribution by Intention\n'
+                 f'(each point = one run\'s avg; box = spread across runs)',
                  fontsize=14, fontweight='bold', y=0.98)
-    
-    filename = "5_intention_boxplot_cdf.png"
-    plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
-    print(f"Saved: {filename}")
-    plt.close()
+    _save(fig, f"{cfg['filename_prefix']}_5_intention_boxplot_cdf.png")
 
-# =============================================================================
-# STATISTICS SUMMARY
-# =============================================================================
-def generate_statistics(df):
-    """Generate and save statistical summary"""
-    stats = {}
 
-    # Overall stats
-    stats['overall'] = df['travel_time'].describe()
+# ---------------------------------------------------------------------------
+# PLOT 6 (NEW) — Min / Avg / Max ribbon per traffic rate and scenario
+#   Shaded band = global min to global max across all runs.
+#   Line         = mean of per-run averages.
+# ---------------------------------------------------------------------------
+def plot_min_avg_max_ribbon(df, metric):
+    cfg                      = METRIC_CONFIG[metric]
+    col_avg, col_min, col_max = cfg['col_avg'], cfg['col_min'], cfg['col_max']
+    df_clean  = _clean(df, metric)
+    scenarios = [s for s in SCENARIOS_MAP if s in df_clean['scenario'].values]
 
-    # By intention
-    stats['by_intention'] = df.groupby('intention')['travel_time'].agg(['mean', 'std', 'min', 'max', 'count'])
+    fig, axes = plt.subplots(1, len(scenarios), figsize=(6 * len(scenarios), 5), sharey=True)
+    if len(scenarios) == 1:
+        axes = [axes]
 
-    # By scenario
-    stats['by_scenario'] = df.groupby('scenario')['travel_time'].agg(['mean', 'std', 'min', 'max', 'count'])
+    for ax, scenario in zip(axes, scenarios):
+        grp = (df_clean[df_clean['scenario'] == scenario]
+               .groupby('traffic_rate')
+               .agg(avg=(col_avg, 'mean'), lo=(col_min, 'min'), hi=(col_max, 'max'))
+               .reset_index()
+               .sort_values('traffic_rate'))
+        x     = np.arange(len(grp))
+        color = SCENARIO_COLORS.get(scenario, '#555')
+        ax.fill_between(x, grp['lo'], grp['hi'], alpha=0.25, color=color, label='min–max range')
+        ax.plot(x, grp['avg'], marker='o', linewidth=2,   color=color, label='avg of runs')
+        ax.plot(x, grp['lo'],  marker='v', linewidth=1, linestyle='--', color=color, alpha=0.6)
+        ax.plot(x, grp['hi'],  marker='^', linewidth=1, linestyle='--', color=color, alpha=0.6)
+        ax.set_xticks(x)
+        ax.set_xticklabels(grp['traffic_rate'], rotation=45, ha='right', fontsize=8)
+        ax.set_title(SCENARIOS_MAP.get(scenario, scenario), fontsize=12, fontweight='bold')
+        ax.set_xlabel('Traffic Rate', fontsize=10)
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8)
 
-    # By combination
-    stats['by_combination'] = df.groupby(['scenario', 'intention'])['travel_time'].agg(['mean', 'std', 'count'])
+    axes[0].set_ylabel(cfg['label'], fontsize=11)
+    fig.suptitle(f'{cfg["title"]} — Min / Avg / Max per Traffic Rate & Scenario',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    _save(fig, f"{cfg['filename_prefix']}_6_min_avg_max_ribbon.png")
 
-    # Save to text file
-    stats_file = os.path.join(output_dir, "statistics_summary.txt")
-    with open(stats_file, 'w') as f:
-        f.write("="*60 + "\n")
-        f.write("SUMO SIMULATION STATISTICS SUMMARY\n")
-        f.write("="*60 + "\n\n")
 
-        f.write("OVERALL STATISTICS\n")
-        f.write("-"*60 + "\n")
-        f.write(stats['overall'].to_string())
+# ---------------------------------------------------------------------------
+# Statistics summary
+# ---------------------------------------------------------------------------
+def generate_statistics(df, metric):
+    cfg                      = METRIC_CONFIG[metric]
+    col_avg, col_min, col_max = cfg['col_avg'], cfg['col_min'], cfg['col_max']
+    df_clean = _clean(df, metric)
 
-        f.write("\n\n" + "="*60 + "\n")
-        f.write("BY INTENTION\n")
-        f.write("-"*60 + "\n")
-        f.write(stats['by_intention'].to_string())
+    def summarise(groupby_cols):
+        return df_clean.groupby(groupby_cols).agg(
+            runs=(col_avg, 'count'),
+            avg= (col_avg, 'mean'),
+            std= (col_avg, 'std'),
+            min= (col_min, 'min'),
+            max= (col_max, 'max'),
+        )
 
-        f.write("\n\n" + "="*60 + "\n")
-        f.write("BY SCENARIO (CONTROL TYPE)\n")
-        f.write("-"*60 + "\n")
-        f.write(stats['by_scenario'].to_string())
+    stats = {
+        'overall':        df_clean[[col_avg, col_min, col_max]].describe(),
+        'by_intention':   summarise('intention'),
+        'by_scenario':    summarise('scenario'),
+        'by_combination': summarise(['scenario', 'intention']),
+    }
 
-        f.write("\n\n" + "="*60 + "\n")
-        f.write("BY COMBINATION (Scenario + Intention)\n")
-        f.write("-"*60 + "\n")
-        f.write(stats['by_combination'].to_string())
+    txt_path = os.path.join(output_dir, f"{cfg['filename_prefix']}_statistics_summary.txt")
+    with open(txt_path, 'w') as f:
+        f.write("=" * 60 + "\n")
+        f.write(f"SIMULATION STATISTICS: {cfg['title'].upper()}\n")
+        f.write("(Derived from per-run min / avg / max columns)\n")
+        f.write("=" * 60 + "\n\n")
+        for title, table in [
+            ("OVERALL",                          stats['overall']),
+            ("BY INTENTION",                     stats['by_intention']),
+            ("BY SCENARIO (CONTROL TYPE)",       stats['by_scenario']),
+            ("BY COMBINATION (Scenario+Intent)", stats['by_combination']),
+        ]:
+            f.write(f"{title}\n{'-'*60}\n{table.to_string()}\n\n{'='*60}\n\n")
 
-    # Also save main results to CSV for easy import
-    summary_csv = os.path.join(output_dir, "summary_by_scenario_intention.csv")
-    stats['by_combination'].reset_index().to_csv(summary_csv, index=False)
+    csv_path = os.path.join(output_dir, f"{cfg['filename_prefix']}_summary_by_scenario_intention.csv")
+    stats['by_combination'].reset_index().to_csv(csv_path, index=False)
+    print(f"Saved: {os.path.basename(txt_path)} + {os.path.basename(csv_path)}")
 
-    print(f"Saved statistics: statistics_summary.txt and summary_by_scenario_intention.csv")
-    return stats
 
-# =============================================================================
-# MAIN
-# =============================================================================
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 def main():
-    print("="*60)
-    print("SUMO Simulation Analysis - Updated Version")
-    print("="*60)
+    print("=" * 60)
+    print("Simulation Analysis — min/avg/max summary format")
+    print("=" * 60)
 
-    # Load data
     df = load_data()
     if df is None:
         return
 
     print(f"\nData summary:")
-    print(f"  Total records: {len(df)}")
-    print(f"  Scenarios: {df['scenario'].unique()}")
-    print(f"  Intentions: {df['intention'].unique()}")
-    print(f"  Traffic rates: {df['traffic_rate'].nunique()}")
+    print(f"  Total runs : {len(df)}")
+    print(f"  Scenarios  : {df['scenario'].dropna().unique()}")
+    print(f"  Intentions : {df['intention'].dropna().unique()}")
+    print(f"  Rate groups: {df['traffic_rate'].nunique()}")
 
-    # Generate all plots
-    print("\nGenerating visualizations...")
+    for metric in ['travel_time', 'waiting_time']:
+        cfg = METRIC_CONFIG[metric]
+        missing = [cfg[c] for c in ('col_avg', 'col_min', 'col_max')
+                   if cfg[c] not in df.columns]
+        if missing:
+            print(f"\nSkipping {metric}: columns not found — {missing}")
+            continue
 
-    plot_intention_scenario_bars(df)
-    plot_control_type_heatmaps(df)
-    plot_intention_boxplots_and_cdf(df)
-    plot_scenario_boxplots_and_cdf(df)
-    plot_heatmap(df)
+        print(f"\nGenerating plots for: {cfg['title']} ...")
+        plot_intention_scenario_bars(df, metric)
+        plot_control_type_heatmaps(df, metric)
+        plot_heatmap(df, metric)
+        plot_scenario_boxplots_and_cdf(df, metric)
+        plot_intention_boxplots_and_cdf(df, metric)
+        plot_min_avg_max_ribbon(df, metric)
 
-    print("\nGenerating statistics...")
-    generate_statistics(df)
+        print(f"Generating statistics for: {cfg['title']} ...")
+        generate_statistics(df, metric)
 
-    print("\n" + "="*60)
-    print(f"Analysis complete! Output saved to: {output_dir}")
-    print("="*60)
+    print(f"\nDone! Output saved to: {output_dir}")
+
 
 if __name__ == "__main__":
     main()
+

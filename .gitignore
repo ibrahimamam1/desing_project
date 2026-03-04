@@ -1,4 +1,7 @@
 ~/
 results/
+outputs/
+plots/
+plots_ft/
 checkpoints/
 tensorboard_logs/

@@ -49,7 +49,8 @@ class Env_Multi(MultiAgentEnv, metaclass=ABCMeta):
         
         # RLlib specific: track active agents in the network
         self._agent_ids = set()
-        
+        self._terminated_agent_ids = set()
+
         # Rendering setup
         self.should_render = self.sim_params.render
         self.sim_params.render = False 
@@ -92,7 +93,6 @@ class Env_Multi(MultiAgentEnv, metaclass=ABCMeta):
         self.k.junction.master_kernel = self.k
         
         self.agents_spawned = 0
-        self.max_agents = 2
 
         self.setup_initial_state()
 
@@ -242,16 +242,13 @@ class Env_Multi(MultiAgentEnv, metaclass=ABCMeta):
             "avg_acceleration": avg_accel,
         }
 
-
     def step(self, action_dict):
         """
         Advance the environment by one step.
-        action_dict: dict mapping agent_id -> action
         """
         self.step_counter_within_rl_step = 0
         
         # 1. Apply Actions
-        # Only apply actions if we have agents in the action_dict
         if action_dict:
             self._apply_rl_actions(action_dict) 
             
@@ -274,13 +271,18 @@ class Env_Multi(MultiAgentEnv, metaclass=ABCMeta):
                 self.k.vehicle.update_vehicle_colors()
         
         # 3. Track Agent Dynamics 
-        current_rl_ids = set(self.k.vehicle.get_rl_ids())
+        raw_current_rl_ids = set(self.k.vehicle.get_rl_ids())
         
+        # --- Remove ghost vehicles that are already dead ---
+        current_rl_ids = raw_current_rl_ids - self._terminated_agent_ids
+        
+        # Count newly spawned agents if any
         newly_spawned = current_rl_ids - self._agent_ids
         self.agents_spawned += len(newly_spawned)
 
-        # Agents that just left the simulation or reached their goal
+        # Agents that reached their goal
         agents_that_left = self._agent_ids - current_rl_ids
+        agents_that_left = agents_that_left - self._terminated_agent_ids
         
         # Update tracked agents
         self._agent_ids = current_rl_ids
@@ -289,48 +291,40 @@ class Env_Multi(MultiAgentEnv, metaclass=ABCMeta):
         colliding_ids = set(self.k.kernel_api.simulation.getCollidingVehiclesIDList())
         rl_crash_ids = colliding_ids & current_rl_ids
         
-        time_limit_reached = (self.time_counter >= (self.env_params.sims_per_step * (self.env_params.warmup_steps + self.env_params.horizon)))
+        global_truncated = (self.time_counter >= self.env_params.horizon)
         
         # 5. Build RLlib Return Dictionaries
         obs = {}
         rewards = {}
         terminateds = {"__all__": False}
-        truncateds = {"__all__": time_limit_reached}
+        truncateds = {"__all__": global_truncated}
         infos = {}
 
         # Process active agents
         for agent_id in current_rl_ids:
             obs[agent_id] = self.get_state(agent_id)
             has_crashed = agent_id in rl_crash_ids
+            action = action_dict.get(agent_id, None) 
             
-            # Compute reward per agent
-            action = action_dict.get(agent_id, None) # Might be None if it just spawned
             rewards[agent_id] = self.compute_reward(agent_id, fail=has_crashed, goal_reached=False, current_action=action)
             
             terminateds[agent_id] = has_crashed
-            truncateds[agent_id] = time_limit_reached
+            truncateds[agent_id] = global_truncated and not terminateds[agent_id]
             infos[agent_id] = {}
+        
+            if terminateds[agent_id] or truncateds[agent_id]:
+                self._terminated_agent_ids.add(agent_id)
 
         # Process agents that departed this step
         for agent_id in agents_that_left:
-            # RLlib requires an observation for the terminal step. 
-            # You must handle returning a dummy observation or caching the last known state.
             obs[agent_id] = self.get_dummy_state() 
             rewards[agent_id] = self.compute_reward(agent_id, fail=False, goal_reached=True, current_action=action_dict.get(agent_id))
             
-            terminateds[agent_id] = True # Successfully exited
+            terminateds[agent_id] = True 
             truncateds[agent_id] = False
             infos[agent_id] = {}
 
-        # Global episode completion (all agents spawned and left)
-        if len(current_rl_ids) == 0 and self.agents_spawned == self.max_agents:
-             terminateds["__all__"] = True
-             pass
-
-        # Calculate global telemetry if episode is ending
-        if terminateds["__all__"] or truncateds["__all__"]:
-            telemetry_stats = self._compute_telemetry_stats()
-            infos["telemetry"] = telemetry_stats
+            self._terminated_agent_ids.add(agent_id)
 
         return obs, rewards, terminateds, truncateds, infos
 
@@ -340,7 +334,8 @@ class Env_Multi(MultiAgentEnv, metaclass=ABCMeta):
         """
         self._init_telemetry()
         super().reset(seed=seed)
-
+        
+        self._terminated_agent_ids = set()
         self.time_counter = 0
         self.agents_spawned = 0 
         self._agent_ids = set()
@@ -406,7 +401,26 @@ class Env_Multi(MultiAgentEnv, metaclass=ABCMeta):
         info_dict = {agent_id: {} for agent_id in self._agent_ids}
 
         return obs_dict, info_dict
-    
+   
+    def _apply_non_rl_controls(self):
+        """Helper to handle IDM/LaneChange controllers for non-RL vehicles."""
+        if len(self.k.vehicle.get_controlled_ids()) > 0:
+            accel = []
+            for veh_id in self.k.vehicle.get_controlled_ids():
+                action = self.k.vehicle.get_acc_controller(veh_id).get_action(self)
+                accel.append(action)
+            self.k.vehicle.apply_acceleration(
+                self.k.vehicle.get_controlled_ids(), accel)
+
+        if len(self.k.vehicle.get_controlled_lc_ids()) > 0:
+            direction = []
+            for veh_id in self.k.vehicle.get_controlled_lc_ids():
+                target_lane = self.k.vehicle.get_lane_changing_controller(veh_id).get_action(self)
+                direction.append(target_lane)
+            self.k.vehicle.apply_lane_change(
+                self.k.vehicle.get_controlled_lc_ids(), direction=direction)
+
+
     @abstractmethod
     def _apply_rl_actions(self, rl_actions_dict):
         """
