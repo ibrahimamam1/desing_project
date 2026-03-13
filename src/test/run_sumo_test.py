@@ -29,9 +29,9 @@ scenarios = {
 # Intentions  ->  base route file names 
 # ---------------------------------------------------------------------------
 intentions = {
-    "all_straight":      "routes_all_straight.rou.xml",
-    "all_left":          "routes_all_left.rou.xml",
-    "uniform_random":    "routes_uniform_random.rou.xml",
+    #"all_straight":      "routes_all_straight.rou.xml",
+    #"all_left":          "routes_all_left.rou.xml",
+    #"uniform_random":    "routes_uniform_random.rou.xml",
     "assymetric_random": "routes_nonuniform_random.rou.xml",
 }
 
@@ -241,7 +241,7 @@ def run_sumo(cfg_path: Path, group_name: str, run_idx: int) -> None:
     """
     seed = random.randint(0, 2**31 - 1)
     cmd = [
-        "sumo",
+        "sumo-gui",
         "-c", str(cfg_path.resolve()),
         "--seed", str(seed),
         "--quit-on-end",

@@ -46,7 +46,7 @@
 
     
     <flow id="flow_T" route="dist_T" begin="0" end="360" probability="0.138889" departSpeed="max" />
-    <flow id="flow_D" route="dist_D" begin="0" end="360" probability="0.083333" departSpeed="max" />
-    <flow id="flow_L" route="dist_L" begin="0" end="360" probability="0.138889" departSpeed="max" />
+    <flow id="flow_D" route="dist_D" begin="0" end="360" probability="0.138889" departSpeed="max" />
+    <flow id="flow_L" route="dist_L" begin="0" end="360" probability="0.041667" departSpeed="max" />
     <flow id="flow_R" route="dist_R" begin="0" end="360" probability="0.138889" departSpeed="max" />
 </routes>

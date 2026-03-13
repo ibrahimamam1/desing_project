@@ -37,6 +37,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
                  render_mode=None
                  ):
         
+        self.agent_id = None 
         self.env_params = env_params
         if scenario is not None:
             deprecated_attribute(self, "scenario", "network")
@@ -153,112 +154,88 @@ class Env_N(gym.Env, metaclass=ABCMeta):
              
     # --- TELEMETRY HELPERS ---
     def _init_telemetry(self):
-        """Resets telemetry storage for a new episode."""
+        """Resets telemetry storage for a new episode (Agent Only)."""
         self.telemetry = {
-            "entry_times": {},      # {veh_id: float (time_step)}
-            "travel_times": {},     # {veh_id: duration} (Only successful vehicles)
-            "waiting_times": {},    # {veh_id: duration} (All vehicles)
-            "zone_durations": {},   # {veh_id: float} (All vehicles seen)
-            "collisions": 0,
-            "speeds": [],        
-            "accelerations": []
+            # --- Agent-only telemetry ---
+            "agent_speeds": [],          # List of speeds for every step agent is alive
+            "agent_accelerations": [],   # List of accels for every step agent is alive
+            "agent_waiting_time": 0.0,   # Accumulated time agent speed < 0.1
+            "agent_spawn_time": None,    # Time step agent first appeared
+            "agent_finish_time": None,   # Time step agent left (success or crash)
+            "agent_collision": False,    # Did agent collide?
+            "agent_success": False,      # Did agent reach goal?
+            "agent_total_distance": 0.0, # Approximate distance travelled
         }
 
     def _update_telemetry_step(self):
         """
-        Updates internal accumulators. 
+        Updates internal accumulators for the specific RL agent only.
         """
         current_time = self.time_counter
         
-        # Get all vehicles currently in the network
-        current_ids = self.k.vehicle.get_ids()
+        # If agent hasn't spawned or is already gone, do nothing
+        if self.agent_id is None:
+            return
 
-        # Define threshold for "not moving" (0.1 m/s is standard SUMO halt threshold)
-        STOP_SPEED_THRESHOLD = 0.1 
+        # Check if agent is currently in the network
+        if self.agent_id in self.k.vehicle.get_ids():
+            # 1. Capture Spawn Time
+            if self.telemetry["agent_spawn_time"] is None:
+                self.telemetry["agent_spawn_time"] = current_time
 
-        # 1. Track Entries and Active Status
-        for veh_id in current_ids:
-            # If new vehicle, initialize trackers
-            if veh_id not in self.telemetry["entry_times"]:
-                self.telemetry["entry_times"][veh_id] = current_time
-                self.telemetry["zone_durations"][veh_id] = 0.0
-                
-            # Initialize waiting time for new vehicles if not present
-            if veh_id not in self.telemetry["waiting_times"]:
-                self.telemetry["waiting_times"][veh_id] = 0.0
-
-            # 2. Track Control Zone Time 
-            if self._is_in_control_zone(veh_id):
-                self.telemetry["zone_durations"][veh_id] += self.sim_step
-
-            speed = self.k.vehicle.get_speed(veh_id)
-            accel = self.k.vehicle.get_accel(veh_id)
-        
-            if speed is not None: # Avoid invalid values during crashes/teleports
-                self.telemetry["speeds"].append(speed)
-                
-                # If speed is below threshold, add sim_step to waiting time
-                if speed < STOP_SPEED_THRESHOLD:
-                    self.telemetry["waiting_times"][veh_id] += self.sim_step
-                # --------------------------------
+            # 2. Get Agent Physics
+            speed = self.k.vehicle.get_speed(self.agent_id)
+            accel = self.k.vehicle.get_accel(self.agent_id)
+            
+            # 3. Update Stats
+            if speed is not None:
+                self.telemetry["agent_speeds"].append(speed)
+                # Track waiting time (speed < 0.1 m/s)
+                if speed < 0.1:
+                    self.telemetry["agent_waiting_time"] += self.sim_step
+                # Track distance (Speed * Time)
+                self.telemetry["agent_total_distance"] += speed * self.sim_step
 
             if accel is not None:
-                self.telemetry["accelerations"].append(accel)
+                self.telemetry["agent_accelerations"].append(accel)
 
-        # 3. Track Successful Exits
-        # get_arrived_ids returns vehicles that reached their destination (not crashed)
-        newly_arrived = self.k.vehicle.get_arrived_ids()
-        for veh_id in newly_arrived:
-            if veh_id in self.telemetry["entry_times"]:
-                duration = current_time - self.telemetry["entry_times"][veh_id]
-                self.telemetry["travel_times"][veh_id] = duration
-                
-                # Cleanup from entry tracker
-                del self.telemetry["entry_times"][veh_id]
-                
-                # NOTE: We do NOT delete from self.telemetry["waiting_times"] 
-                # because we want to keep the record for the final stats.
-
-        # 4. Track Collisions (RL vehicles only)
+        # 4. Check Collisions specifically for this agent
         colliding_ids = self.k.kernel_api.simulation.getCollidingVehiclesIDList()
-        rl_collisions = sum(1 for v in colliding_ids if v in self.k.vehicle.get_rl_ids())
-        if rl_collisions > 0:
-            self.telemetry["collisions"] += rl_collisions
+        if self.agent_id in colliding_ids:
+            self.telemetry["agent_collision"] = True
+            self.telemetry["agent_finish_time"] = current_time
 
     def _compute_telemetry_stats(self):
         """
-        Returns the raw per-vehicle dictionaries.
+        Returns the raw agent statistics.
         Called only when terminated is True.
         """
         import numpy as np
-        avg_speed = np.mean(self.telemetry["speeds"]) if self.telemetry["speeds"] else 0
-        avg_accel = np.mean(self.telemetry["accelerations"]) if self.telemetry["accelerations"] else 0
+        
+        # Calculate Averages
+        avg_speed = np.mean(self.telemetry["agent_speeds"]) if self.telemetry["agent_speeds"] else 0.0
+        avg_accel = np.mean(self.telemetry["agent_accelerations"]) if self.telemetry["agent_accelerations"] else 0.0
 
-        successful_ids = self.telemetry["travel_times"].keys()
-
-        # Filter zone durations: Keep ONLY vehicles that are also in travel_times
-        filtered_zone_times = {
-            veh_id: self.telemetry["zone_durations"][veh_id]
-            for veh_id in successful_ids
-            if veh_id in self.telemetry["zone_durations"]
-        }
+        # Calculate Duration
+        spawn_time = self.telemetry["agent_spawn_time"]
+        # If finish time wasn't set (e.g. timeout), use current time
+        finish_time = self.telemetry["agent_finish_time"] if self.telemetry["agent_finish_time"] else self.time_counter
+        
+        duration = 0.0
+        if spawn_time is not None:
+            duration = finish_time - spawn_time
 
         return {
-            "episode_duration": self.time_counter,
-            "number_of_collisions": self.telemetry["collisions"],
-            
-            # Successful vehicles only
-            "per_vehicle_travel_times": self.telemetry["travel_times"],
-            
-            # All vehicles (entered)
-            "per_vehicle_waiting_times": self.telemetry["waiting_times"], 
-            
-            # Successful vehicles only (Filtered)
-            "per_vehicle_zone_times": filtered_zone_times,
-            "avg_speed": avg_speed,
-            "avg_acceleration": avg_accel,
+            "agent_success": self.telemetry["agent_success"],
+            "agent_collision": self.telemetry["agent_collision"],
+            "agent_duration": duration,
+            "agent_waiting_time": self.telemetry["agent_waiting_time"],
+            "agent_avg_speed": float(avg_speed),
+            "agent_avg_accel": float(avg_accel),
+            "agent_total_distance": self.telemetry["agent_total_distance"],
+            "episode_length": self.time_counter
         }
-
+    
     def step(self, action):
         """
         Advance the environment by one step.
@@ -267,7 +244,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         
         # Snapshot of agents before step
         sorted_ids = set(self.sorted_ids)
-        if sorted_ids:
+        if self.agent_id in sorted_ids:
             self.apply_rl_actions(action) 
         if hasattr(self, "additional_command"):
             self.additional_command()
@@ -289,13 +266,6 @@ class Env_N(gym.Env, metaclass=ABCMeta):
             if self.sim_params.render:
                 self.k.vehicle.update_vehicle_colors()
        
-        new_sorted_ids = set(self.sorted_ids)
-        
-        if len(new_sorted_ids) > 0:
-            self.rl_agent_spawned = True
-            
-        # Agents that existed before but left the system
-        agents_that_left = sorted_ids - new_sorted_ids
         
         # 3. Retrieve Observations
         obs = self.get_state() 
@@ -303,18 +273,22 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         rl_ids_set = set(self.k.vehicle.get_rl_ids())
         rl_crash_ids = colliding_ids & rl_ids_set  # Only RL vehicles that actually crashed
         
-        goal_reached = self.rl_agent_spawned and len(rl_ids_set) == 0  #agent spawned then left
-        # Global Truncation (Time limit reached)
-        time_limit_reached = (self.time_counter >= (self.env_params.sims_per_step * (self.env_params.warmup_steps + self.env_params.horizon)))
+        crashed = self.agent_id in rl_crash_ids
+        goal_reached = (self.agent_id not in self.sorted_ids) and not crashed  #agent spawned then left
+        truncated = (self.time_counter >= self.env_params.horizon)
        
-        vehicles_left = len(new_sorted_ids)
-        truncated = time_limit_reached
         # Only terminate if an RL agent crashed OR successfully arrived
-        rl_crashed = len(rl_crash_ids) > 0
-        terminated = rl_crashed or goal_reached
+        terminated = crashed or goal_reached
         
-        rl_agent_id = list(new_sorted_ids)[0] if new_sorted_ids else 'RL_0'
-        reward = self.compute_reward(rl_agent_id, rl_crashed, goal_reached, current_action=action)
+        # Update agent-only telemetry flags
+        if goal_reached:
+           self.telemetry["agent_success"] = True
+           if self.telemetry["agent_finish_time"] is None:
+                self.telemetry["agent_finish_time"] = self.time_counter
+        if crashed:
+            self.telemetry["agent_collision"] = True
+        
+        reward = self.compute_reward(self.agent_id, crashed, goal_reached, current_action=action)
         
         # --- COMPUTE TELEMETRY ---
         telemetry_stats = None
@@ -347,25 +321,39 @@ class Env_N(gym.Env, metaclass=ABCMeta):
 
     def reset(self, *, seed=None, options=None):
         """
-        Reset the environment.
+        Reset the environment with a spawn safety valve.
         """
         # --- RESET TELEMETRY ---
         self._init_telemetry()
         # -----------------------
 
+        # Call parent reset (if using gymnasium.Env, though Env_N inherits directly from gym.Env)
         super().reset(seed=seed)
+        
         self.last_action = 0.0
-        self.last_obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
+        # Ensure observation space is respected (Box vs Discrete check might be needed depending on subclass)
+        if hasattr(self.observation_space, 'shape'):
+            self.last_obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
+        else:
+            self.last_obs = np.zeros(0, dtype=np.float32)
 
         self.time_counter = 0
         self.rl_agent_spawned = False
+        self.agent_id = None
+
         if self.should_render:
             self.sim_params.render = True
             self.restart_simulation(self.sim_params)
 
+        # Standard Flow restart logic
         if self.sim_params.restart_instance or (self.step_counter > 2e6 and self.simulator != 'aimsun'):
             self.step_counter = 0
-            self.sim_params.seed = random.randint(0, 1e5)
+            # Handle seeding for deterministic behavior if needed
+            if seed is not None:
+                self.sim_params.seed = seed
+            else:
+                self.sim_params.seed = random.randint(0, 100000)
+            
             self.k.vehicle = deepcopy(self.initial_vehicles)
             self.k.vehicle.master_kernel = self.k
             self.k.junction = deepcopy(self.initial_junction)
@@ -383,6 +371,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
 
         self.k.vehicle.reset()
 
+        # Re-add initial vehicles
         for veh_id in self.initial_ids:
             type_id, edge, lane_index, pos, speed = self.initial_state[veh_id]
             try:
@@ -399,6 +388,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         if self.sim_params.render:
             self.k.vehicle.update_vehicle_colors()
         
+        
         while not self.k.vehicle.get_rl_ids():
             self._apply_non_rl_controls()
             self.k.simulation.simulation_step()
@@ -407,10 +397,17 @@ class Env_N(gym.Env, metaclass=ABCMeta):
             self.step_counter += 1
 
         # Now that the agent exists, grab the FIRST real observation
-        obs = self.get_state()
+        rl_ids = self.k.vehicle.get_rl_ids()
+        self.agent_id = rl_ids[0]  
+        self.rl_agent_spawned = True
         
+        try:
+            self.k.vehicle.set_color(self.agent_id, (255, 0, 0))
+        except:
+            pass # Ha
+        obs = self.get_state()
         return obs, {}
-    
+
     @property
     def sorted_ids(self):
         """Sort the vehicle ids of vehicles in the network by position.""" 

@@ -23,16 +23,29 @@ class AlphaEnv_v01(Env_N):
        
         #### V1
         # Ego-centric observation: S_ego = [d_norm, v_norm, cos θ, sin θ]
-       # self.ego_obs_features = 4
+        self.ego_obs_features = 4
         # Per-neighbor (ego-relative): S_i = [dx, dy, v, cos Δθ, sin Δθ]
-        #self.neighbour_obs_features = 5
+        self.neighbour_obs_features = 5
         
         ### V2
         # Ego-centric observation: S_ego = [d_norm, v_norm]
-        self.ego_obs_features = 2
-        # Per-neighbor (ego-relative): S_i = [dx, dy, v]
-        self.neighbour_obs_features = 2
+        # self.ego_obs_features = 2
+        # Per-neighbor (ego-relative): S_i = [v, d, ttc]
+        # self.neighbour_obs_features = 3
+
+        ### V3 
+        # Ego-centric observation: S_ego = [d_norm, v_norm, heading_norm]
+        #self.ego_obs_features = 3
+        # Per-neighbor (ego-relative): S_i = [v_norm, d_norm, heading_norm]
+        #self.neighbour_obs_features = 3
         
+        ### V4 
+        # Ego-centric observation: S_ego = [d_norm, v_norm, sin , cos]
+        #self.ego_obs_features = 4
+        # Per-neighbor (ego-relative): S_i = [v_norm, d_norm, ttc, sin, cos]
+        #self.neighbour_obs_features = 5
+        
+
         
         super().__init__(env_params, sim_params, network, simulator)
         
@@ -65,11 +78,11 @@ class AlphaEnv_v01(Env_N):
         
         # If the vehicle despawned (reached goal or crashed), return the 
         # last valid observation to prevent value function spikes.
-        if not rl_ids:
+        if not self.agent_id in rl_ids:
             return self.last_obs
 
         # Get current observation
-        obs = self._get_local_observation(rl_ids[0])
+        obs = self._get_local_observation(self.agent_id)
         
         # Cache the valid observation for the terminal step
         self.last_obs = obs
@@ -81,34 +94,37 @@ class AlphaEnv_v01(Env_N):
         # Ego Distance to goal
         route = self.k.vehicle.get_route(ego_id)
         total_route_length = sum([self.k.network.edge_length(edge) for edge in route])
+        total_route_length = max(total_route_length, 1e-4)
 
-        ego_dis = self.k.vehicle.get_distance(ego_id) # distance traveled by vehicle
+        ego_dis = self.k.vehicle.get_distance(ego_id)
+        # Also protect against Flow's default -1001 for missing vehicles
+        if ego_dis == -1001: 
+            ego_dis = 0.0 
+
         dis_to_goal = total_route_length - ego_dis
-        dis_to_goal_norm = np.clip(dis_to_goal / total_route_length, -1, 1) # normalise distance to goal
-
-        # Ego Speed (normalized, clipped)
+        dis_to_goal_norm = np.clip(dis_to_goal / total_route_length, -1.0, 1.0)        # Ego Speed (normalized, clipped)
+        
         ego_speed = self.k.vehicle.get_speed(ego_id)
         max_speed = self.k.network.max_speed()
         ego_speed_norm = np.clip(ego_speed / max_speed, -1.0, 1.0)
         
-        # Ego heading (SUMO heading → standard math angle)
+        # Ego heading (Convert SUMO North=0, CW to Math East=0, CCW)
         ego_heading = self.k.vehicle.get_heading(ego_id)
-        ego_angle_rad = np.radians((-ego_heading) + 90)
+        ego_angle_rad = np.radians((-ego_heading) + 90)    
         ego_cos = np.cos(ego_angle_rad)
         ego_sin = np.sin(ego_angle_rad)
         
-        # Convert SUMO heading (North=0, CW) to Math (East=0, CCW)
-        ego_angle_rad = np.radians((-ego_heading) + 90)    
-        
-        obs_vector = [dis_to_goal_norm, ego_speed_norm]
+        # Add heading to the ego observation vector (Now 4 features)
+        obs_vector = [dis_to_goal_norm, ego_speed_norm, ego_sin, ego_cos]
         
         # --- 2. Neighbor States (ego-centric relative frame) ---
         neighbors_info = []
         all_ids = self.k.vehicle.get_ids()
         
         pos_ret = self.k.vehicle.get_2d_position(ego_id)
+        if pos_ret is None or pos_ret == -1001 or pos_ret == (-1001.0, -1001.0):
+            return self.last_obs 
         ego_x, ego_y = pos_ret
-
 
         for other_id in all_ids:
             if other_id == ego_id:
@@ -124,23 +140,17 @@ class AlphaEnv_v01(Env_N):
             distance = np.sqrt(dx_world**2 + dy_world**2)
             
             if self._is_conflicting(ego_id, other_id) and distance <= self.perception_radius:
-                # Rotate world-frame delta into ego frame
-               # dx_ego = dx_world * ego_cos + dy_world * ego_sin
-               # dy_ego = -dx_world * ego_sin + dy_world * ego_cos
-               # 
-               # # Normalize relative position by perception radius → [-1, 1]
-               # dx_norm = np.clip(dx_ego / self.perception_radius, -1.0, 1.0)
-               # dy_norm = np.clip(dy_ego / self.perception_radius, -1.0, 1.0)
-
+                edge = self.k.vehicle.get_edge(other_id)
+                
                 # Neighbor speed (normalized)
                 other_speed = self.k.vehicle.get_speed(other_id)
                 other_speed_norm = np.clip(other_speed / max_speed, 0.0, 1.0)
-               
-                other_ttc_norm = (distance / self.perception_radius) / (np.abs(ego_speed_norm - other_speed_norm))
                 
-                # Relative heading (neighbor heading - ego heading)
+                # Neighbor heading to Math angle
                 other_heading = self.k.vehicle.get_heading(other_id)
                 other_angle_rad = np.radians((-other_heading) + 90)
+                other_sin = np.sin(other_angle_rad)
+                other_cos = np.cos(other_angle_rad)
                 
                 # --- GEOMETRIC PROJECTION ---
                 t, u = self._get_distances_to_collision_point(
@@ -148,81 +158,76 @@ class AlphaEnv_v01(Env_N):
                     other_x, other_y, other_angle_rad
                 )
                 
-                # Default "safe" values (max distance)
-                d_ego_conf = self.perception_radius
-                d_other_conf = self.perception_radius 
-                
-               # INTERSECTING PATHS
+                # INTERSECTING PATHS
                 if t is not None:
-                    # We only care if intersection is in the FUTURE (t > 0, u > 0)
                     if t > -2.0 and u > -2.0:
-                        d_ego_conf = t
-                        d_other_conf = u
+                        d_raw = t - u
+                        d = np.clip(d_raw / self.perception_radius, -1.0, 1.0)
+                        
+                        # Calculate TTC based on Ego's distance to the conflict point (t)
+                        # We clip to 10 seconds max to normalize it properly.
+                        raw_ttc = max(0.0, t) / (ego_speed + 1e-6)
+                        ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0) 
                     else:
-                        d_ego_conf = self.perception_radius
-                        d_other_conf = self.perception_radius 
-                    
-                    # Normalize [-1, 1]
-                    d_ego_norm = np.clip(d_ego_conf / self.perception_radius, 0.0, 1.0)
-                    d_other_norm = np.clip(d_other_conf / self.perception_radius, 0.0, 1.0)
-                    d = d_ego_norm - d_other_norm
+                        d = 1.0  # Safe
+                        ttc = 1.0 # Safe
 
                 # PARALLEL PATHS (Leading / Following)
                 else:
-                    # Project relative position onto Ego's forward direction
                     longitudinal_proj = dx_world * ego_cos + dy_world * ego_sin
-                    
-                    # Determine sign: 
-                    # +1 if neighbor is in front (Ego is behind)
-                    # -1 if neighbor is behind (Ego is ahead)
                     sign = np.sign(longitudinal_proj)
-                    
-                    # d = Signed Euclidean Distance
-                    d_raw = sign * distance
-                    
-                    # Normalize by perception radius to keep input within [-1, 1] range
-                    # If neighbor is 20m behind and radius is 50m -> d = -0.4
+                    d_raw = sign * abs(longitudinal_proj)
                     d = np.clip(d_raw / self.perception_radius, -1.0, 1.0)
+                    
+                    # TTC based on distance to the car directly ahead/behind
+                    raw_ttc = abs(longitudinal_proj) / (ego_speed + 1e-6)
+                    ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0)
 
-                # delta_angle = other_angle_rad - ego_angle_rad
-               # cos_delta = np.cos(delta_angle)
-               # sin_delta = np.sin(delta_angle)
-                
+                # Append the 5 features
                 neighbors_info.append({
-                    #'dx': dx_norm,
-                    #'dy': dy_norm,
                     'v': other_speed_norm,
-                    #'cos_delta': cos_delta,
-                    #'sin_delta': sin_delta,
+                    'dx': dx_world/self.perception_radius,
+                    'dy': dy_world/self.perception_radius,
+                    'ttc': ttc,
                     'd': d,
+                    'sinx': other_sin,
+                    'cosx': other_cos,
+                    'edge': edge,
                     'distance': distance,
                 })
-        
-        # Sort by distance (closest first), take top k
+
+        # Sort by physical distance (closest first), take top k
         neighbors_info.sort(key=lambda n: n['distance'])
         neighbors_info = neighbors_info[:self.max_neighbours]
         
+        print("=========NEIGHBOUR INFO==============") 
         for neighbor in neighbors_info:
+            print(f'edge={neighbor["edge"]}, dist={neighbor["distance"]:.2f}, dx={neighbor["dx"]:.2f}, dy={neighbor["dy"]:.2f}, ttc={neighbor["ttc"]:.2f}, STC={neighbor["d"]:.2f}')
             obs_vector.extend([
-                #neighbor['dx'],
-                #neighbor['dy'],
                 neighbor['v'],
                 neighbor['d'],
+                neighbor['ttc'],
+                neighbor['sinx'],
+                neighbor['cosx']
             ])
         
-        # Pad with zeros if fewer than max_neighbours
+        # Pad if fewer than max_neighbours: [v=0, d=1(safe), ttc=1(safe), sin=0, cos=0]
         num_actual = len(neighbors_info)
         if num_actual < self.max_neighbours:
             missing_count = self.max_neighbours - num_actual
-            # v1: Pad with [dx=1.0, dy=1.0, v=0.0, cos=0.0, sin=0.0]
-            # v2: Pad with [dx=1.0, dy=1.0, v=0.0]
             for _ in range(missing_count):
-                #obs_vector.extend([1.0, 1.0, 0.0, 0.0, 0.0])
-                #obs_vector.extend([1.0, 1.0, 0.0])
-                obs_vector.extend([0.0, 1.0])
+                obs_vector.extend([0.0, 1.0, 1.0, 0.0, 0.0])
         
-        return np.array(obs_vector, dtype=np.float32)
-    
+        # --- THE FAILSAFE ---
+        obs_array = np.array(obs_vector, dtype=np.float32)
+        
+        if np.isnan(obs_array).any() or np.isinf(obs_array).any():
+            print(f"WARNING: NaN/Inf generated in observation for {ego_id}! Sanitizing array.")
+            # Convert NaNs to 0.0, +Inf to 1.0, -Inf to -1.0
+            obs_array = np.nan_to_num(obs_array, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+        return obs_array 
+
     def _get_distances_to_collision_point(self, x1, y1, theta1, x2, y2, theta2):
         """
         Calculates the distance from (x1, y1) to the collision point and 
@@ -276,7 +281,16 @@ class AlphaEnv_v01(Env_N):
         # --- Condition A: Currently on the same edge ---
         if edge1 == edge2:
             return True
+        
+        # Vehicles that are not on the same lane and either already crossed cannot be conflicting
+        if edge1.startswith('E#X') or edge2.startswith('E#X'):
+            return False  
 
+        # 2. JUNCTION FIX: If either vehicle is inside the junction (internal SUMO edge), 
+        # consider them conflicting. Your geometric projection will filter out the safe ones.
+        if edge1.startswith(':') or edge2.startswith(':'):
+            return True 
+         
         # 3. Get Routes
         # Note: get_route returns a tuple/list of edges from current position to destination
         route1 = self.k.vehicle.get_route(veh1)
@@ -311,7 +325,8 @@ class AlphaEnv_v01(Env_N):
         else:
             real_action = action_val * max_decel
 
-        rl_ids = self.sorted_ids
+        rl_ids = []
+        rl_ids.append(self.agent_id)
         if not rl_ids:
             return
         self.k.vehicle.apply_acceleration(rl_ids, [real_action])
