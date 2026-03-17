@@ -105,6 +105,8 @@ class AlphaEnv_v01(Env_N):
         dis_to_goal_norm = np.clip(dis_to_goal / total_route_length, -1.0, 1.0)        # Ego Speed (normalized, clipped)
         
         ego_speed = self.k.vehicle.get_speed(ego_id)
+        if ego_speed is None or ego_speed < 0:
+            ego_speed = 0.0
         max_speed = self.k.network.max_speed()
         ego_speed_norm = np.clip(ego_speed / max_speed, -1.0, 1.0)
         
@@ -144,6 +146,9 @@ class AlphaEnv_v01(Env_N):
                 
                 # Neighbor speed (normalized)
                 other_speed = self.k.vehicle.get_speed(other_id)
+                if other_speed is None or other_speed < 0:
+                    other_speed = 0.0
+
                 other_speed_norm = np.clip(other_speed / max_speed, 0.0, 1.0)
                 
                 # Neighbor heading to Math angle
@@ -200,9 +205,7 @@ class AlphaEnv_v01(Env_N):
         neighbors_info.sort(key=lambda n: n['distance'])
         neighbors_info = neighbors_info[:self.max_neighbours]
         
-        print("=========NEIGHBOUR INFO==============") 
         for neighbor in neighbors_info:
-            print(f'edge={neighbor["edge"]}, dist={neighbor["distance"]:.2f}, dx={neighbor["dx"]:.2f}, dy={neighbor["dy"]:.2f}, ttc={neighbor["ttc"]:.2f}, STC={neighbor["d"]:.2f}')
             obs_vector.extend([
                 neighbor['v'],
                 neighbor['d'],
@@ -218,14 +221,9 @@ class AlphaEnv_v01(Env_N):
             for _ in range(missing_count):
                 obs_vector.extend([0.0, 1.0, 1.0, 0.0, 0.0])
         
-        # --- THE FAILSAFE ---
         obs_array = np.array(obs_vector, dtype=np.float32)
-        
-        if np.isnan(obs_array).any() or np.isinf(obs_array).any():
-            print(f"WARNING: NaN/Inf generated in observation for {ego_id}! Sanitizing array.")
-            # Convert NaNs to 0.0, +Inf to 1.0, -Inf to -1.0
-            obs_array = np.nan_to_num(obs_array, nan=0.0, posinf=1.0, neginf=-1.0)
-            
+        assert np.all(np.isfinite(obs_array)), f"Non-finite obs: {obs_array}" 
+           
         return obs_array 
 
     def _get_distances_to_collision_point(self, x1, y1, theta1, x2, y2, theta2):
@@ -333,11 +331,11 @@ class AlphaEnv_v01(Env_N):
 
     def compute_reward(self, agent_id, fail, goal_reached, current_action=None):
         if fail:
-            return -10.0  
+            return -1  
         if goal_reached:
-            return 15.0   
+            return 1   
             
-        if agent_id not in self.k.vehicle.get_ids():
+        if agent_id not in self.k.vehicle.get_rl_ids():
             return 0.0
 
         speed = self.k.vehicle.get_speed(agent_id)

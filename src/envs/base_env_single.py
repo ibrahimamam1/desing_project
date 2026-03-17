@@ -228,7 +228,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         return {
             "agent_success": self.telemetry["agent_success"],
             "agent_collision": self.telemetry["agent_collision"],
-            "agent_duration": duration,
+            "agent_travel_time": duration,
             "agent_waiting_time": self.telemetry["agent_waiting_time"],
             "agent_avg_speed": float(avg_speed),
             "agent_avg_accel": float(avg_accel),
@@ -400,11 +400,8 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         rl_ids = self.k.vehicle.get_rl_ids()
         self.agent_id = rl_ids[0]  
         self.rl_agent_spawned = True
-        
-        try:
-            self.k.vehicle.set_color(self.agent_id, (255, 0, 0))
-        except:
-            pass # Ha
+        self.k.vehicle.set_color(self.agent_id, (255, 0, 0))
+            
         obs = self.get_state()
         return obs, {}
 

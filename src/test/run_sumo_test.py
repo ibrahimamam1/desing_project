@@ -17,7 +17,7 @@ for d in (NETS_DIR, ROUTES_DIR, OUTPUT_DIR, TMP_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
-# Scenarios  ->  net file names  
+# Scenarios  ->  net file names
 # ---------------------------------------------------------------------------
 scenarios = {
     "allway_stop": "100m_allway_stop_fcfs_junction.net.xml",
@@ -26,7 +26,7 @@ scenarios = {
 }
 
 # ---------------------------------------------------------------------------
-# Intentions  ->  base route file names 
+# Intentions  ->  base route file names
 # ---------------------------------------------------------------------------
 intentions = {
     #"all_straight":      "routes_all_straight.rou.xml",
@@ -91,7 +91,7 @@ traffic_rates = {
 # Constants
 # ---------------------------------------------------------------------------
 SIM_DURATION = 360   # seconds
-N_SIMS       = 42     # runs per scenario x intention x traffic-rate group
+N_SIMS       = 42    # runs per scenario x intention x traffic-rate group
 
 EDGE_MAP = {
     "N": "E#T-X",  # North = Top
@@ -107,12 +107,24 @@ FLOW_ID_MAP = {
     "E#R-X": "flow_R",
 }
 
-# CSV written incrementally; one file per group
+# Summary CSV — one row per run (unchanged)
 CSV_HEADER = [
     "run",
     "n_vehicles",
     "travel_time_min", "travel_time_avg", "travel_time_max",
     "waiting_time_min", "waiting_time_avg", "waiting_time_max",
+]
+
+# Per-vehicle CSV — one row per completed vehicle trip, all runs appended
+VEHICLE_CSV_HEADER = [
+    "run",
+    "vehicle_id",
+    "travel_time",   # tripinfo 'duration'   attribute (seconds)
+    "waiting_time",  # tripinfo 'waitingTime' attribute (seconds)
+    "time_loss",     # tripinfo 'timeLoss'    attribute (seconds)
+    "depart",        # departure time (seconds into simulation)
+    "arrival",       # arrival  time (seconds into simulation)
+    "route_length",  # routeLength (metres)
 ]
 
 
@@ -128,11 +140,6 @@ def vph_to_probability(vph: int) -> float:
 # ---------------------------------------------------------------------------
 def build_route_file(base_rou_path: Path, flow_config: dict,
                      out_path: Path) -> None:
-    """
-    flow_config: {"N": vph, "S": vph, "W": vph, "E": vph}
-    Writes a modified copy of base_rou_path to out_path with updated
-    probability attributes on each <flow> element.
-    """
     tree = ET.parse(base_rou_path)
     root = tree.getroot()
 
@@ -156,10 +163,6 @@ def build_route_file(base_rou_path: Path, flow_config: dict,
 def build_sumocfg(net_path: Path, rou_path: Path,
                   tripinfo_path: Path,
                   cfg_path: Path) -> None:
-    """
-    Writes a SUMO config with only tripinfo-output enabled.
-    tripinfo provides per-vehicle duration, waitingTime, and timeLoss.
-    """
     cfg_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <configuration>
     <input>
@@ -185,30 +188,62 @@ def build_sumocfg(net_path: Path, rou_path: Path,
 
 
 # ---------------------------------------------------------------------------
-# Parse tripinfo XML -> min / avg / max for travel time, waiting, time loss
+# Parse tripinfo XML
+#   Returns:
+#     summary  (dict)  — min/avg/max aggregates for the summary CSV
+#     vehicles (list)  — one dict per completed trip for the vehicle CSV
 # ---------------------------------------------------------------------------
-def parse_tripinfo(tripinfo_path: Path) -> dict:
+def parse_tripinfo(tripinfo_path: Path, run_idx: int) -> tuple[dict, list]:
     """
-    Reads a SUMO tripinfo XML and computes min/avg/max for:
-      - travel time  ('duration'    attribute, seconds)
-      - waiting time ('waitingTime' attribute, seconds)
-      - time loss    ('timeLoss'    attribute, seconds)
+    Reads a SUMO tripinfo XML.
 
-    Returns a dict whose keys match the CSV_HEADER metric columns.
-    Values are None if no completed trips exist.
+    Summary dict keys match CSV_HEADER metric columns.
+    Vehicle list contains one dict per <tripinfo> element with keys
+    matching VEHICLE_CSV_HEADER.
+
+    Only vehicles that actually *arrived* (arrival >= 0) are included;
+    vehicles still in the network at simulation end are excluded unless
+    --tripinfo-output.write-unfinished was set.
     """
+    empty_summary = {
+        "n_vehicles":       0,
+        "travel_time_min":  None, "travel_time_avg":  None, "travel_time_max":  None,
+        "waiting_time_min": None, "waiting_time_avg": None, "waiting_time_max": None,
+    }
+
     if not tripinfo_path.exists():
-        return {
-            "n_vehicles":       0,
-            "travel_time_min":  None, "travel_time_avg":  None, "travel_time_max":  None,
-            "waiting_time_min": None, "waiting_time_avg": None, "waiting_time_max": None,
-        }
+        return empty_summary, []
 
-    durations, waiting = [], []
+    vehicle_rows = []
+    durations    = []
+    waiting      = []
 
     for trip in ET.parse(tripinfo_path).getroot().iter("tripinfo"):
-        durations.append(float(trip.get("duration",    0)))
-        waiting.append(  float(trip.get("waitingTime", 0)))
+        arrival = float(trip.get("arrival", -1))
+        if arrival < 0:
+            # Vehicle did not finish — skip for arrived-only statistics
+            continue
+
+        dur  = float(trip.get("duration",    0))
+        wait = float(trip.get("waitingTime", 0))
+        loss = float(trip.get("timeLoss",    0))
+        dep  = float(trip.get("depart",      0))
+        rlen = float(trip.get("routeLength", 0))
+        vid  = trip.get("id", "")
+
+        durations.append(dur)
+        waiting.append(wait)
+
+        vehicle_rows.append({
+            "run":          run_idx,
+            "vehicle_id":   vid,
+            "travel_time":  dur,
+            "waiting_time": wait,
+            "time_loss":    loss,
+            "depart":       dep,
+            "arrival":      arrival,
+            "route_length": rlen,
+        })
 
     def stats(values):
         if not values:
@@ -218,7 +253,7 @@ def parse_tripinfo(tripinfo_path: Path) -> dict:
     tt_min, tt_avg, tt_max = stats(durations)
     wt_min, wt_avg, wt_max = stats(waiting)
 
-    return {
+    summary = {
         "n_vehicles":       len(durations),
         "travel_time_min":  tt_min,
         "travel_time_avg":  tt_avg,
@@ -228,20 +263,16 @@ def parse_tripinfo(tripinfo_path: Path) -> dict:
         "waiting_time_max": wt_max,
     }
 
+    return summary, vehicle_rows
+
 
 # ---------------------------------------------------------------------------
 # Run a single SUMO simulation
 # ---------------------------------------------------------------------------
 def run_sumo(cfg_path: Path, group_name: str, run_idx: int) -> None:
-    """
-    Launch sumo-gui with the given config.
-    Switch "sumo-gui" -> "sumo" for headless batch runs.
-    A unique --seed is passed each run so that the stochastic flow
-    spawning produces different vehicle patterns every time.
-    """
     seed = random.randint(0, 2**31 - 1)
     cmd = [
-        "sumo-gui",
+        "sumo",
         "-c", str(cfg_path.resolve()),
         "--seed", str(seed),
         "--quit-on-end",
@@ -273,11 +304,20 @@ def main():
             for rate_key, rate_list in traffic_rates.items():
                 group_name = f"{scen_key}_{int_key}_{rate_key}"
 
-                # One CSV per group, header written once, rows appended each run
-                csv_path = OUTPUT_DIR / f"{group_name}.csv"
-                csv_file = csv_path.open("w", newline="", encoding="utf-8")
-                writer   = csv.DictWriter(csv_file, fieldnames=CSV_HEADER)
-                writer.writeheader()
+                # ----------------------------------------------------------
+                # Open both CSVs once; append rows incrementally
+                # ----------------------------------------------------------
+                summary_csv_path = OUTPUT_DIR / f"{group_name}.csv"
+                vehicle_csv_path = OUTPUT_DIR / f"{group_name}_vehicles.csv"
+
+                summary_file = summary_csv_path.open("w", newline="", encoding="utf-8")
+                vehicle_file = vehicle_csv_path.open("w", newline="", encoding="utf-8")
+
+                summary_writer = csv.DictWriter(summary_file, fieldnames=CSV_HEADER)
+                vehicle_writer = csv.DictWriter(vehicle_file, fieldnames=VEHICLE_CSV_HEADER)
+
+                summary_writer.writeheader()
+                vehicle_writer.writeheader()
 
                 for i in range(N_SIMS):
                     current_flow = random.choice(rate_list)
@@ -288,8 +328,9 @@ def main():
                     tmp_rou = TMP_DIR / f"{group_name}_run{i}.rou.xml"
                     build_route_file(base_rou_path, current_flow, tmp_rou)
 
-                    # Single reusable tripinfo file in tmp/ (overwritten each run)
-                    tripinfo_out = TMP_DIR / "current_tripinfo.xml"
+                    # Each run gets its own tripinfo file so per-vehicle data
+                    # is never overwritten before it has been parsed.
+                    tripinfo_out = TMP_DIR / f"{group_name}_run{i}_tripinfo.xml"
 
                     # Build sumocfg
                     tmp_cfg = TMP_DIR / f"{group_name}_run{i}.sumocfg"
@@ -298,19 +339,25 @@ def main():
                     # Run SUMO
                     run_sumo(tmp_cfg, group_name, i)
 
-                    # Parse tripinfo and write CSV row
-                    metrics = parse_tripinfo(tripinfo_out)
-                    row = {
-                        "run": i,
-                        **metrics,
-                    }
-                    writer.writerow(row)
-                    csv_file.flush()  # persist immediately in case of crash
+                    # Parse tripinfo — get both summary and per-vehicle data
+                    metrics, vehicle_rows = parse_tripinfo(tripinfo_out, run_idx=i)
+
+                    # Write summary row
+                    summary_writer.writerow({"run": i, **metrics})
+                    summary_file.flush()
+
+                    # Append all per-vehicle rows for this run
+                    vehicle_writer.writerows(vehicle_rows)
+                    vehicle_file.flush()
 
                     # Console summary
                     def fmt(v):
                         return f"{v:.2f}s" if v is not None else "N/A"
 
+                    print(
+                        f"    vehicles    : {metrics['n_vehicles']}  "
+                        f"(wrote {len(vehicle_rows)} rows to vehicle CSV)"
+                    )
                     print(
                         f"    travel_time : "
                         f"min={fmt(metrics['travel_time_min'])}  "
@@ -325,7 +372,11 @@ def main():
                     )
                     print(f"--- Finished: {group_name}  Run {i:02d} ---\n")
 
-                csv_file.close()
-                print(f"[CSV] Written: {csv_path}\n")
+                summary_file.close()
+                vehicle_file.close()
+                print(f"[CSV] Summary : {summary_csv_path}")
+                print(f"[CSV] Vehicles: {vehicle_csv_path}\n")
+
+
 if __name__ == "__main__":
     main()

@@ -90,8 +90,8 @@ vehicles.add(
 )
 
 ############################# InFlow Configuration #########################
-high = 500
-medium = 300
+high = 700
+medium = 450
 
 traffic_rates = [
     {"N": medium, "S": medium, "W": medium, "E": medium},
@@ -143,7 +143,7 @@ env_params = EnvParams(
 )
 
 sim_params = SumoParams(
-    port=None, sim_step=sim_step, emission_path=output_file_dir,
+    port=None, sim_step=sim_step, emission_path=None,
     lateral_resolution=None, no_step_log=True, render=False, save_render=False,
     sight_radius=25, show_radius=False, pxpm=2, force_color_update=False,
     overtake_right=False, seed=42, restart_instance=True, print_warnings=False,
@@ -175,8 +175,6 @@ class TrafficCallbacks(DefaultCallbacks):
         episode.custom_metrics["collision"] = 1.0 if telemetry.get("agent_collision", False) else 0.0
         episode.custom_metrics["success"] = 1.0 if telemetry.get("agent_success", False) else 0.0
         episode.custom_metrics["avg_speed"] = float(telemetry.get("agent_avg_speed", 0.0))
-        episode.custom_metrics["travel_time"] = float(telemetry.get("agent_travel_time", 0.0))
-        episode.custom_metrics["waiting_time"] = float(telemetry.get("agent_waiting_time", 0.0))
 
     def on_train_result(self, *, algorithm, result: dict, **kwargs) -> None:
         keep = {"episode_reward_mean", "episode_len_mean", "custom_metrics",
@@ -239,11 +237,16 @@ def build_config(num_workers: int = 7, render: bool = False) -> PPOConfig:
                 num_rollout_workers=num_workers,
                 rollout_fragment_length="auto",
                 num_envs_per_worker=1,
-            )
+                create_env_on_local_worker=True,
+            ).rl_module(_enable_rl_module_api=False)
             .training(
-                train_batch_size=2048, sgd_minibatch_size=256, num_sgd_iter=10,
-                lr=[[0, 3e-4], [2_000_000, 1e-5]], 
-                entropy_coeff=[[0, 0.02], [2_000_000, 0.0]], 
+                _enable_learner_api=False,
+                model={"fcnet_activation": "tanh"},
+                train_batch_size=8192, sgd_minibatch_size=256, num_sgd_iter=10,
+                lr=3e-4, 
+                lr_schedule=[[0, 3e-4], [2_000_000, 1e-5]], 
+                entropy_coeff=0.02, 
+                entropy_coeff_schedule=[[0, 0.02], [2_000_000, 0.0]],
                 gamma=0.995, lambda_=0.95, clip_param=0.2,
                 vf_clip_param=50.0, grad_clip=0.5, kl_coeff=0.2, kl_target=0.01,
             )

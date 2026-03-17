@@ -89,7 +89,7 @@ vehicles.add(
     num_vehicles=num_non_rl_vehicles,
     car_following_params=NonRL_car_following_params,
     lane_change_params=None,
-    color="red",
+    color="green",
 )
 
 ############################# InFlow Configuration #########################
@@ -341,12 +341,12 @@ def build_config(num_workers: int = 7, render: bool = False) -> PPOConfig:
                 num_sgd_iter=10,
                 
                 lr=[[0, 3e-4], [2_000_000, 1e-5]], 
-                entropy_coeff=[[0, 0.05], [2_000_000, 0.0]], 
+                entropy_coeff=[[0, 0.001], [2_000_000, 0.0]], 
                 
                 gamma=0.995, 
                 lambda_=0.95,
                 clip_param=0.2,
-                vf_clip_param=5.0,
+                vf_clip_param=50.0,
                 vf_loss_coeff=0.5,
                 grad_clip=0.5,
                 kl_coeff=0.2,
@@ -357,7 +357,7 @@ def build_config(num_workers: int = 7, render: bool = False) -> PPOConfig:
                 evaluation_duration=10,
                 evaluation_num_workers=1,
             )
-            .debugging(log_level="ERROR")
+            .debugging(log_level="DEBUG")
             .reporting(
                 metrics_num_episodes_for_smoothing=10,
                 min_time_s_per_iteration=0,
@@ -390,8 +390,6 @@ def train():
     import logging
     ray.init(
         ignore_reinit_error=True, 
-        log_to_driver=False,        
-        logging_level=logging.ERROR    
      )
     
     os.makedirs(FINAL_MODEL_DIR, exist_ok=True)
@@ -400,7 +398,7 @@ def train():
     print(f"\n--- TRAINING START (Discrete - Curriculum) ---")
     print(f"TensorBoard → {TENSORBOARD_RUN_DIR}")
     
-    num_iterations = 1600
+    num_iterations = 1200
     num_stages = len(traffic_rates)
     iters_per_stage = num_iterations // num_stages
     best_reward = -float('inf')

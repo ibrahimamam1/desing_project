@@ -273,43 +273,57 @@ class AlphaEnv_v01_Attention(Env_N):
         max_accel = self.env_params.additional_params['max_accel']
         max_decel = self.env_params.additional_params['max_decel']
 
-        action_val = float(rl_action)
+        # 1. Safely extract and sanitize the action
+        try:
+            action_val = float(rl_action[0]) if isinstance(rl_action, (list, np.ndarray)) else float(rl_action)
+        except (TypeError, ValueError):
+            action_val = 0.0
+            
+        if np.isnan(action_val) or np.isinf(action_val):
+            action_val = 0.0  # Fallback to zero acceleration if NaN
+
         # Denormalize from [-1, 1] to [-max_decel, max_accel]
         if action_val >= 0:
             real_action = action_val * max_accel
         else:
             real_action = action_val * max_decel
 
-        rl_ids = []
-        rl_ids.append(self.agent_id)
-        if not rl_ids:
-            return
-        self.k.vehicle.apply_acceleration(rl_ids, [real_action])
+        rl_ids = [self.agent_id]
+        if self.agent_id in self.k.vehicle.get_ids():
+            self.k.vehicle.apply_acceleration(rl_ids, [real_action])
 
     def compute_reward(self, agent_id, fail, goal_reached, current_action=None):
-        if fail:
-            return -10.0  
-        if goal_reached:
-            return 15.0   
+        if fail: return -10.0  
+        if goal_reached: return 15.0   
             
         if agent_id not in self.k.vehicle.get_ids():
             return 0.0
 
         speed = self.k.vehicle.get_speed(agent_id)
+        # Prevent NaN speed from SUMO glitch
+        if speed == -1001 or np.isnan(speed): 
+            speed = 0.0
+
         max_speed = self.k.network.max_speed()
 
-        # Step rewards balanced to prevent "suicide loophole"
         speed_reward = 0.05 * (speed / max_speed)
         time_penalty = -0.02 
         
-        # Action smoothness penalty
         action_penalty = 0.0
         if current_action is not None:
-            action_val = float(current_action[0])
-            action_penalty = -0.02 * abs(action_val - self.last_action)
-            self.last_action = action_val
+            # 2. Sanitize action penalty calculation
+            action_val = float(current_action[0]) if isinstance(current_action, (list, np.ndarray)) else float(current_action)
+            if not np.isnan(action_val) and not np.isinf(action_val):
+                action_penalty = -0.02 * abs(action_val - self.last_action)
+                self.last_action = action_val
         
-        return speed_reward + time_penalty + action_penalty
+        total_reward = speed_reward + time_penalty + action_penalty
+        
+        # 3. Final failsafe before handing reward back to RLlib
+        if np.isnan(total_reward) or np.isinf(total_reward):
+            return 0.0
+            
+        return total_reward
 
     def additional_command(self):
         """

@@ -47,33 +47,38 @@ SCENARIO_COLORS = {
 }
 
 # ---------------------------------------------------------------------------
-# Metric config  —  each metric maps to three CSV columns: _min / _avg / _max
+# Metric config  —  each metric maps to three summary CSV columns (_min/_avg/_max)
+# and one per-vehicle CSV column.
 # ---------------------------------------------------------------------------
 METRIC_CONFIG = {
     'travel_time': {
-        'label':           'Travel Time (s)',
-        'title':           'Travel Time',
-        'filename_prefix': 'travel_time',
-        'col_avg':         'travel_time_avg',
-        'col_min':         'travel_time_min',
-        'col_max':         'travel_time_max',
+        'label':              'Travel Time (s)',
+        'title':              'Travel Time',
+        'filename_prefix':    'travel_time',
+        # summary CSV columns (for bar / heatmap / ribbon plots)
+        'col_avg':            'travel_time_avg',
+        'col_min':            'travel_time_min',
+        'col_max':            'travel_time_max',
+        # per-vehicle CSV column (for CDF / box plots)
+        'col_vehicle':        'travel_time',
     },
     'waiting_time': {
-        'label':           'Waiting Time (s)',
-        'title':           'Waiting Time',
-        'filename_prefix': 'waiting_time',
-        'col_avg':         'waiting_time_avg',
-        'col_min':         'waiting_time_min',
-        'col_max':         'waiting_time_max',
+        'label':              'Waiting Time (s)',
+        'title':              'Waiting Time',
+        'filename_prefix':    'waiting_time',
+        'col_avg':            'waiting_time_avg',
+        'col_min':            'waiting_time_min',
+        'col_max':            'waiting_time_max',
+        'col_vehicle':        'waiting_time',
     },
 }
 
 
 # ---------------------------------------------------------------------------
-# Filename parser
+# Filename parser  (works for both "group.csv" and "group_vehicles.csv")
 # ---------------------------------------------------------------------------
 def parse_filename(filename):
-    basename   = os.path.basename(filename).replace('.csv', '')
+    basename   = os.path.basename(filename).replace('_vehicles.csv', '').replace('.csv', '')
     scenarios  = list(SCENARIOS_MAP.keys())
     intentions = list(INTENTIONS_MAP.keys())
 
@@ -98,17 +103,20 @@ def parse_filename(filename):
 
 
 # ---------------------------------------------------------------------------
-# Data loader
-# New format: one row per run, columns:
-#   run, n_vehicles,
-#   travel_time_min, travel_time_avg, travel_time_max,
-#   waiting_time_min, waiting_time_avg, waiting_time_max
+# Data loaders
 # ---------------------------------------------------------------------------
-def load_data():
-    csv_files = glob(os.path.join(results_dir, "*.csv"))
-    print(f"Found {len(csv_files)} CSV files")
+
+def load_summary_data():
+    """
+    Load per-run summary CSVs (one row per run with _min/_avg/_max columns).
+    Used by: bar charts, heatmaps, ribbon plot, statistics.
+    """
+    # Exclude _vehicles.csv files
+    csv_files = [f for f in glob(os.path.join(results_dir, "*.csv"))
+                 if not f.endswith("_vehicles.csv")]
+    print(f"Found {len(csv_files)} summary CSV files")
     if not csv_files:
-        print("No CSV files found!")
+        print("No summary CSV files found!")
         return None
 
     all_data = []
@@ -133,15 +141,58 @@ def load_data():
         return None
 
     combined = pd.concat(all_data, ignore_index=True)
-    print(f"Loaded {len(combined)} runs across {len(csv_files)} groups")
+    print(f"Loaded {len(combined)} runs across {len(csv_files)} groups (summary)")
+    return combined
+
+
+def load_vehicle_data():
+    """
+    Load per-vehicle CSVs (*_vehicles.csv).  One row per completed vehicle trip.
+    Columns: run, vehicle_id, travel_time, waiting_time, time_loss,
+             depart, arrival, route_length  + scenario / intention / traffic_rate.
+    Used by: CDF plots, box plots.
+    """
+    vehicle_files = glob(os.path.join(results_dir, "*_vehicles.csv"))
+    print(f"Found {len(vehicle_files)} vehicle CSV files")
+    if not vehicle_files:
+        print("No per-vehicle CSV files found!  "
+              "Re-run run_simulation.py to generate them.")
+        return None
+
+    all_data = []
+    for vfile in vehicle_files:
+        try:
+            meta = parse_filename(vfile)
+            df   = pd.read_csv(vfile)
+            for col in ['travel_time', 'waiting_time', 'time_loss',
+                        'depart', 'arrival', 'route_length']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            df['scenario']     = meta['scenario']
+            df['intention']    = meta['intention']
+            df['traffic_rate'] = meta['traffic_rate']
+            df['group_name']   = meta['group_name']
+            all_data.append(df)
+        except Exception as e:
+            print(f"Error loading {vfile}: {e}")
+
+    if not all_data:
+        return None
+
+    combined = pd.concat(all_data, ignore_index=True)
+    print(f"Loaded {len(combined):,} vehicle trips across "
+          f"{len(vehicle_files)} groups (per-vehicle)")
     return combined
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _clean(df, metric):
+def _clean_summary(df, metric):
     return df.dropna(subset=[METRIC_CONFIG[metric]['col_avg']])
+
+def _clean_vehicle(df, metric):
+    return df.dropna(subset=[METRIC_CONFIG[metric]['col_vehicle']])
 
 def _save(fig, filename):
     plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
@@ -150,14 +201,12 @@ def _save(fig, filename):
 
 
 # ---------------------------------------------------------------------------
-# PLOT 1 — Bar chart with min–max error bars
-#   avg bar height = mean of per-run _avg values
-#   error bars     = global _min to global _max across all runs in cell
+# PLOT 1 — Bar chart with min–max error bars  (uses summary data)
 # ---------------------------------------------------------------------------
 def plot_intention_scenario_bars(df, metric):
     cfg      = METRIC_CONFIG[metric]
     col_avg, col_min, col_max = cfg['col_avg'], cfg['col_min'], cfg['col_max']
-    df_clean  = _clean(df, metric)
+    df_clean  = _clean_summary(df, metric)
     intentions = [i for i in INTENTIONS_MAP if i in df_clean['intention'].values]
     scenario_order = [s for s in SCENARIOS_MAP if s in df_clean['scenario'].values]
 
@@ -214,12 +263,12 @@ def plot_intention_scenario_bars(df, metric):
 
 
 # ---------------------------------------------------------------------------
-# PLOT 2 — Heatmap per scenario: avg value by intention × traffic_rate
+# PLOT 2 — Heatmap per scenario  (uses summary data)
 # ---------------------------------------------------------------------------
 def plot_control_type_heatmaps(df, metric):
     cfg      = METRIC_CONFIG[metric]
     col_avg  = cfg['col_avg']
-    df_clean  = _clean(df, metric)
+    df_clean  = _clean_summary(df, metric)
     scenarios = [s for s in SCENARIOS_MAP if s in df_clean['scenario'].values]
 
     fig, axes = plt.subplots(1, len(scenarios), figsize=(6 * len(scenarios), 6))
@@ -256,12 +305,12 @@ def plot_control_type_heatmaps(df, metric):
 
 
 # ---------------------------------------------------------------------------
-# PLOT 3 — Summary heatmaps (intention vs scenario, and detailed)
+# PLOT 3 — Summary heatmaps  (uses summary data)
 # ---------------------------------------------------------------------------
 def plot_heatmap(df, metric):
     cfg     = METRIC_CONFIG[metric]
     col_avg = cfg['col_avg']
-    df_clean = _clean(df, metric)
+    df_clean = _clean_summary(df, metric)
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
@@ -290,16 +339,19 @@ def plot_heatmap(df, metric):
 
 
 # ---------------------------------------------------------------------------
-# PLOT 4 — Box plots + CDF per scenario
-#   Each data point is one run's _avg value.
-#   Box shows variability across the 42 runs.
+# PLOT 4 — Box plots + CDF per scenario  (CDF now uses per-vehicle data)
+#
+#   Box plots: one box per scenario, each data point = one vehicle's value
+#              (pooled across all runs / traffic rates / intentions for
+#               that scenario).  This gives a true distributional picture.
+#   CDF:       empirical CDF over all individual vehicle trips per scenario.
 # ---------------------------------------------------------------------------
-def plot_scenario_boxplots_and_cdf(df, metric):
-    cfg      = METRIC_CONFIG[metric]
-    col_avg  = cfg['col_avg']
-    df_clean  = _clean(df, metric)
-    scenarios = [s for s in SCENARIOS_MAP if s in df_clean['scenario'].values]
-    n_scen    = len(scenarios)
+def plot_scenario_boxplots_and_cdf(df_vehicle, metric):
+    cfg         = METRIC_CONFIG[metric]
+    col_vehicle = cfg['col_vehicle']
+    df_clean    = _clean_vehicle(df_vehicle, metric)
+    scenarios   = [s for s in SCENARIOS_MAP if s in df_clean['scenario'].values]
+    n_scen      = len(scenarios)
 
     fig = plt.figure(figsize=(max(4 * n_scen, 12), 10))
     gs  = fig.add_gridspec(2, 1, height_ratios=[1, 1], hspace=0.35)
@@ -309,7 +361,7 @@ def plot_scenario_boxplots_and_cdf(df, metric):
                 for i in range(n_scen)]
 
     for idx, scenario in enumerate(scenarios):
-        data     = df_clean[df_clean['scenario'] == scenario][col_avg].dropna()
+        data     = df_clean[df_clean['scenario'] == scenario][col_vehicle].dropna()
         color    = SCENARIO_COLORS.get(scenario, '#95a5a6')
         mean_val = data.mean()
         ax       = box_axes[idx]
@@ -318,46 +370,57 @@ def plot_scenario_boxplots_and_cdf(df, metric):
                    medianprops=dict(color='black', linewidth=2),
                    whiskerprops=dict(color='black', linewidth=1.5),
                    capprops=dict(color='black', linewidth=1.5),
-                   flierprops=dict(marker='o', markersize=3, alpha=0.5))
+                   flierprops=dict(marker='o', markersize=2, alpha=0.3))
         ax.plot(1, mean_val, marker='*', color='red', markersize=15,
                 markeredgecolor='darkred', markeredgewidth=1.5, zorder=3,
                 label=f'Mean: {mean_val:.1f}s')
-        ax.set_title(SCENARIOS_MAP.get(scenario, scenario), fontsize=11, fontweight='bold')
+        n_veh = len(data)
+        ax.set_title(f'{SCENARIOS_MAP.get(scenario, scenario)}\n(n={n_veh:,} vehicles)',
+                     fontsize=11, fontweight='bold')
         ax.set_ylabel(cfg['label'], fontsize=10)
         ax.grid(axis='y', alpha=0.3)
         ax.set_xticklabels([''])
         ax.legend(loc='upper right', fontsize=8)
 
+    # --- CDF — empirical, one curve per scenario, one point per vehicle ---
     ax_cdf = fig.add_subplot(gs[1])
     for scenario in scenarios:
-        data = np.sort(df_clean[df_clean['scenario'] == scenario][col_avg].dropna())
+        data = np.sort(
+            df_clean[df_clean['scenario'] == scenario][col_vehicle].dropna().values
+        )
         cdf  = np.arange(1, len(data) + 1) / len(data)
         ax_cdf.plot(data, cdf, linewidth=2.5,
                     color=SCENARIO_COLORS.get(scenario, '#95a5a6'),
-                    label=SCENARIOS_MAP.get(scenario, scenario))
+                    label=f"{SCENARIOS_MAP.get(scenario, scenario)} (n={len(data):,})")
+
     ax_cdf.set_xlabel(cfg['label'], fontsize=12)
     ax_cdf.set_ylabel('CDF', fontsize=12)
     ax_cdf.set_ylim(0, 1)
     ax_cdf.grid(alpha=0.3)
-    ax_cdf.set_title(f'CDF — {cfg["title"]} (All Scenarios)', fontsize=12, fontweight='bold')
+    ax_cdf.set_title(f'Empirical CDF — {cfg["title"]} per Vehicle (All Scenarios)',
+                     fontsize=12, fontweight='bold')
     ax_cdf.legend(loc='lower right', fontsize=10, framealpha=0.9)
 
-    fig.suptitle(f'{cfg["title"]} Distribution by Controller Type\n'
-                 f'(each point = one run\'s avg; box = spread across {42} runs)',
-                 fontsize=14, fontweight='bold', y=0.98)
+    n_runs = df_clean['run'].nunique() if 'run' in df_clean.columns else '?'
+    fig.suptitle(
+        f'{cfg["title"]} Distribution by Controller Type\n'
+        f'(each data point = one individual vehicle trip; '
+        f'pooled across all runs / traffic rates)',
+        fontsize=14, fontweight='bold', y=0.98
+    )
     _save(fig, f"{cfg['filename_prefix']}_4_scenario_boxplot_cdf.png")
 
 
 # ---------------------------------------------------------------------------
-# PLOT 5 — Box plots + CDF per intention
+# PLOT 5 — Box plots + CDF per intention  (CDF now uses per-vehicle data)
 # ---------------------------------------------------------------------------
-def plot_intention_boxplots_and_cdf(df, metric):
-    cfg      = METRIC_CONFIG[metric]
-    col_avg  = cfg['col_avg']
-    df_clean   = _clean(df, metric)
-    intentions = [i for i in INTENTIONS_MAP if i in df_clean['intention'].values]
-    n_intents  = len(intentions)
-    colors     = sns.color_palette("Set2", n_intents)
+def plot_intention_boxplots_and_cdf(df_vehicle, metric):
+    cfg         = METRIC_CONFIG[metric]
+    col_vehicle = cfg['col_vehicle']
+    df_clean    = _clean_vehicle(df_vehicle, metric)
+    intentions  = [i for i in INTENTIONS_MAP if i in df_clean['intention'].values]
+    n_intents   = len(intentions)
+    colors      = sns.color_palette("Set2", n_intents)
 
     fig = plt.figure(figsize=(max(4 * n_intents, 12), 10))
     gs  = fig.add_gridspec(2, 1, height_ratios=[1, 1], hspace=0.35)
@@ -367,7 +430,7 @@ def plot_intention_boxplots_and_cdf(df, metric):
                 for i in range(n_intents)]
 
     for idx, intention in enumerate(intentions):
-        data     = df_clean[df_clean['intention'] == intention][col_avg].dropna()
+        data     = df_clean[df_clean['intention'] == intention][col_vehicle].dropna()
         mean_val = data.mean()
         ax       = box_axes[idx]
         ax.boxplot(data, patch_artist=True, widths=0.5, showfliers=True,
@@ -375,44 +438,53 @@ def plot_intention_boxplots_and_cdf(df, metric):
                    medianprops=dict(color='black', linewidth=2),
                    whiskerprops=dict(color='black', linewidth=1.5),
                    capprops=dict(color='black', linewidth=1.5),
-                   flierprops=dict(marker='o', markersize=3, alpha=0.5))
+                   flierprops=dict(marker='o', markersize=2, alpha=0.3))
         ax.plot(1, mean_val, marker='*', color='orange', markersize=15,
                 markeredgecolor='darkorange', markeredgewidth=1.5, zorder=3,
                 label=f'Mean: {mean_val:.1f}s')
-        ax.set_title(INTENTIONS_MAP.get(intention, intention), fontsize=11, fontweight='bold')
+        n_veh = len(data)
+        ax.set_title(f'{INTENTIONS_MAP.get(intention, intention)}\n(n={n_veh:,} vehicles)',
+                     fontsize=11, fontweight='bold')
         ax.set_ylabel(cfg['label'], fontsize=10)
         ax.grid(axis='y', alpha=0.3)
         ax.set_xticklabels([''])
         ax.legend(loc='upper right', fontsize=8)
 
+    # --- CDF — empirical, one curve per intention, one point per vehicle ---
     ax_cdf = fig.add_subplot(gs[1])
     for idx, intention in enumerate(intentions):
-        data = np.sort(df_clean[df_clean['intention'] == intention][col_avg].dropna())
+        data = np.sort(
+            df_clean[df_clean['intention'] == intention][col_vehicle].dropna().values
+        )
         cdf  = np.arange(1, len(data) + 1) / len(data)
         ax_cdf.plot(data, cdf, linewidth=2.5, color=colors[idx],
-                    label=INTENTIONS_MAP.get(intention, intention))
+                    label=f"{INTENTIONS_MAP.get(intention, intention)} (n={len(data):,})")
+
     ax_cdf.set_xlabel(cfg['label'], fontsize=12)
     ax_cdf.set_ylabel('CDF', fontsize=12)
     ax_cdf.set_ylim(0, 1)
     ax_cdf.grid(alpha=0.3)
-    ax_cdf.set_title(f'{cfg["title"]} Distribution (CDF)', fontsize=12, fontweight='bold')
+    ax_cdf.set_title(f'Empirical CDF — {cfg["title"]} per Vehicle',
+                     fontsize=12, fontweight='bold')
     ax_cdf.legend(loc='lower right', fontsize=10, framealpha=0.9)
 
-    fig.suptitle(f'{cfg["title"]} Distribution by Intention\n'
-                 f'(each point = one run\'s avg; box = spread across runs)',
-                 fontsize=14, fontweight='bold', y=0.98)
+    fig.suptitle(
+        f'{cfg["title"]} Distribution by Intention\n'
+        f'(each data point = one individual vehicle trip; '
+        f'pooled across all runs / traffic rates)',
+        fontsize=14, fontweight='bold', y=0.98
+    )
     _save(fig, f"{cfg['filename_prefix']}_5_intention_boxplot_cdf.png")
 
 
 # ---------------------------------------------------------------------------
-# PLOT 6 (NEW) — Min / Avg / Max ribbon per traffic rate and scenario
-#   Shaded band = global min to global max across all runs.
-#   Line         = mean of per-run averages.
+# PLOT 6 — Min / Avg / Max ribbon per traffic rate and scenario
+#          (uses summary data — ribbon is across runs, not vehicles)
 # ---------------------------------------------------------------------------
 def plot_min_avg_max_ribbon(df, metric):
     cfg                      = METRIC_CONFIG[metric]
     col_avg, col_min, col_max = cfg['col_avg'], cfg['col_min'], cfg['col_max']
-    df_clean  = _clean(df, metric)
+    df_clean  = _clean_summary(df, metric)
     scenarios = [s for s in SCENARIOS_MAP if s in df_clean['scenario'].values]
 
     fig, axes = plt.subplots(1, len(scenarios), figsize=(6 * len(scenarios), 5), sharey=True)
@@ -446,12 +518,12 @@ def plot_min_avg_max_ribbon(df, metric):
 
 
 # ---------------------------------------------------------------------------
-# Statistics summary
+# Statistics summary  (uses summary data)
 # ---------------------------------------------------------------------------
 def generate_statistics(df, metric):
     cfg                      = METRIC_CONFIG[metric]
     col_avg, col_min, col_max = cfg['col_avg'], cfg['col_min'], cfg['col_max']
-    df_clean = _clean(df, metric)
+    df_clean = _clean_summary(df, metric)
 
     def summarise(groupby_cols):
         return df_clean.groupby(groupby_cols).agg(
@@ -493,41 +565,63 @@ def generate_statistics(df, metric):
 # ---------------------------------------------------------------------------
 def main():
     print("=" * 60)
-    print("Simulation Analysis — min/avg/max summary format")
+    print("Simulation Analysis — min/avg/max summary + per-vehicle format")
     print("=" * 60)
 
-    df = load_data()
-    if df is None:
+    # Load both datasets independently
+    df_summary = load_summary_data()
+    df_vehicle = load_vehicle_data()
+
+    if df_summary is None and df_vehicle is None:
+        print("No data found in either summary or vehicle CSVs.  Exiting.")
         return
 
-    print(f"\nData summary:")
-    print(f"  Total runs : {len(df)}")
-    print(f"  Scenarios  : {df['scenario'].dropna().unique()}")
-    print(f"  Intentions : {df['intention'].dropna().unique()}")
-    print(f"  Rate groups: {df['traffic_rate'].nunique()}")
+    if df_summary is not None:
+        print(f"\nSummary data:")
+        print(f"  Total runs : {len(df_summary)}")
+        print(f"  Scenarios  : {df_summary['scenario'].dropna().unique()}")
+        print(f"  Intentions : {df_summary['intention'].dropna().unique()}")
+        print(f"  Rate groups: {df_summary['traffic_rate'].nunique()}")
+
+    if df_vehicle is not None:
+        print(f"\nPer-vehicle data:")
+        print(f"  Total trips: {len(df_vehicle):,}")
+        print(f"  Scenarios  : {df_vehicle['scenario'].dropna().unique()}")
+        print(f"  Intentions : {df_vehicle['intention'].dropna().unique()}")
 
     for metric in ['travel_time', 'waiting_time']:
         cfg = METRIC_CONFIG[metric]
-        missing = [cfg[c] for c in ('col_avg', 'col_min', 'col_max')
-                   if cfg[c] not in df.columns]
-        if missing:
-            print(f"\nSkipping {metric}: columns not found — {missing}")
-            continue
+        print(f"\n{'='*60}")
+        print(f"Generating plots for: {cfg['title']} ...")
 
-        print(f"\nGenerating plots for: {cfg['title']} ...")
-        plot_intention_scenario_bars(df, metric)
-        plot_control_type_heatmaps(df, metric)
-        plot_heatmap(df, metric)
-        plot_scenario_boxplots_and_cdf(df, metric)
-        plot_intention_boxplots_and_cdf(df, metric)
-        plot_min_avg_max_ribbon(df, metric)
+        # Plots that need summary data
+        if df_summary is not None:
+            missing = [cfg[c] for c in ('col_avg', 'col_min', 'col_max')
+                       if cfg[c] not in df_summary.columns]
+            if missing:
+                print(f"  [SKIP] Summary columns not found: {missing}")
+            else:
+                plot_intention_scenario_bars(df_summary, metric)
+                plot_control_type_heatmaps(df_summary, metric)
+                plot_heatmap(df_summary, metric)
+                plot_min_avg_max_ribbon(df_summary, metric)
+                print(f"Generating statistics for: {cfg['title']} ...")
+                generate_statistics(df_summary, metric)
 
-        print(f"Generating statistics for: {cfg['title']} ...")
-        generate_statistics(df, metric)
+        # Plots that need per-vehicle data (CDF + box)
+        if df_vehicle is not None:
+            col_v = cfg['col_vehicle']
+            if col_v not in df_vehicle.columns:
+                print(f"  [SKIP] Vehicle column '{col_v}' not found in vehicle CSVs")
+            else:
+                plot_scenario_boxplots_and_cdf(df_vehicle, metric)
+                plot_intention_boxplots_and_cdf(df_vehicle, metric)
+        else:
+            print(f"  [SKIP] No per-vehicle data — box/CDF plots skipped.\n"
+                  f"         Run run_simulation.py to generate *_vehicles.csv files.")
 
     print(f"\nDone! Output saved to: {output_dir}")
 
 
 if __name__ == "__main__":
     main()
-

@@ -21,6 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from networks.uniform_random import UniformRandomNetwork
 from networks.all_straight import AllStraghtNetwork
 from networks.all_left import AllLeftNetwork
+from networks.asymetric_random import AsymmetricRandomNetwork
 
 from flow.core.params import (
     VehicleParams, NetParams, InitialConfig, TrafficLightParams,
@@ -32,6 +33,7 @@ import ray
 from ray.tune.registry import register_env
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.models import ModelCatalog
+from plot_eval_results import plot_eval_results
 
 # ─────────────────────── CLI ───────────────────────
 parser = argparse.ArgumentParser(description="Evaluate trained v0.1 agent.")
@@ -44,10 +46,10 @@ parser.add_argument("--n_sims", type=int, default=42, help="Runs per scenario co
 parser.add_argument("--render", action="store_true", default=False)
 args = parser.parse_args()
 
-# ─────────────────── Sim Params ────────────────────
+# ─────────────── Sim Params ────────────────────
 min_gap=2.5; max_accel=2.6; max_decel=4.5; max_speed=55; initial_speed=0
 speed_factor=1.0; speed_dev=0.1; sigma=0; tau=0.8; horizon=180; sim_step=0.25
-warmup_steps=5
+warmup_steps=50
 
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 net_file = os.path.join(root_dir, "networks", "100m_right_before_left.net.xml")
@@ -61,6 +63,7 @@ intentions = {
     "all_straight": AllStraghtNetwork,
     "all_left": AllLeftNetwork,
     "uniform_random": UniformRandomNetwork,
+    "asymetric_random": AsymmetricRandomNetwork 
 }
 
 high_rate=500; medium_rate=300; low_rate=150
@@ -128,9 +131,8 @@ def _build_inflows(traffic_rate):
             depart_lane=0, depart_speed=initial_speed, begin=1, color="green")
     inf.add(veh_type="NonRL", edge="E#L-X", probability=traffic_rate["W"]/3600,
             depart_lane=0, depart_speed=initial_speed, begin=1, color="green")
-    inf.add(veh_type="RL", edge="E#L-X", probability=traffic_rate["W"]/3600,
-            depart_lane=0, depart_speed=initial_speed, begin=warmup_steps,
-            number=1, color="red")
+    inf.add(veh_type="RL", edge="E#L-X", probability=0.8,
+            depart_lane=0, depart_speed=initial_speed, begin=warmup_steps, color="red")
     return inf
 
 
@@ -150,6 +152,9 @@ def main():
         from models.attention_model import AttentionPolicyModel
         ModelCatalog.register_custom_model("attention_policy", AttentionPolicyModel)
 
+    # Ray is initialised once for the whole script and shut down at the very end.
+    # We do NOT call ray.shutdown() between runs — that would be expensive and
+    # can leave orphaned processes. Instead we destroy only the algo + env objects.
     ray.init(ignore_reinit_error=True)
 
     vehicles = VehicleParams()
@@ -195,7 +200,7 @@ def main():
             for rate_key, rate_list in traffic_rates.items():
                 group_name = f"{scen_key}_{int_key}_{rate_key}_{version}"
                 csv_path = os.path.join(output_dir, f"{group_name}.csv")
-                
+
                 with open(csv_path, "w", newline="") as f:
                     csv.DictWriter(f, fieldnames=CSV_HEADER).writeheader()
 
@@ -203,11 +208,11 @@ def main():
 
                 for run_idx in range(n_sims):
                     current_flow = random.choice(rate_list)
-                    
+
                     _net_file = os.path.join(root_dir, "networks", scen_net_file)
                     _net_params = NetParams(osm_path=None, template=_net_file,
                                            inflows=_build_inflows(current_flow))
-                    
+
                     flow_params = dict(
                         exp_tag="eval", network=int_class, simulator="traci",
                         sim=sim_params, env=env_params, net=_net_params,
@@ -227,52 +232,89 @@ def main():
 
                     cfg = (PPOConfig()
                         .environment(env=env_name, env_config={"render": args.render}, disable_env_checking=True)
-                        .framework("torch")
+                        .framework("torch").
+                        rl_module(_enable_rl_module_api=False)
+                        .training(_enable_learner_api=False)
                         .rollouts(num_rollout_workers=0)
                         .resources(num_gpus=0))
-                    
+
                     if "attention" in version:
-                        cfg = cfg.training(model={
+                        cfg = cfg.training( _enable_learner_api=False,  model={
                             "custom_model": "attention_policy",
                             "custom_model_config": {
                                 "ego_features": 2, "neighbor_features": 3,
                                 "max_neighbors": 5, "embed_dim": 64,
                                 "num_heads": 4, "mlp_hidden": 256}})
 
-                    algo = cfg.build()
-                    algo.restore(checkpoint_path)
-                    env = algo.workers.local_worker().env
+                    # ── run with guaranteed teardown ──────────────────────────
+                    algo = None
+                    env  = None
+                    row  = None
+                    try:
+                        algo = cfg.build()
+                        algo.restore(checkpoint_path)
+                        env = algo.workers.local_worker().env
 
-                    obs, _ = env.reset()
-                    done = False
-                    while not done:
-                        action = algo.compute_single_action(obs, explore=False)
-                        obs, reward, terminated, truncated, info = env.step(action)
-                        done = terminated or truncated
+                        obs, _ = env.reset()
+                        done = False
+                        while not done:
+                            action = algo.compute_single_action(obs, explore=False)
+                            obs, reward, terminated, truncated, info = env.step(action)
+                            done = terminated or truncated
 
-                    # Extract telemetry
-                    telemetry = info.get("telemetry", {})
-                    row = {
-                        "run": run_idx,
-                        "collision": 1 if telemetry.get("agent_collision", False) else 0,
-                        "success": 1 if telemetry.get("agent_success", False) else 0,
-                        "avg_speed": f"{telemetry.get('agent_avg_speed', 0.0):.4f}",
-                        "travel_time": f"{telemetry.get('agent_travel_time', 0.0):.4f}",
-                        "waiting_time": f"{telemetry.get('agent_waiting_time', 0.0):.4f}",
-                    }
+                        telemetry = info.get("telemetry", {})
+                        row = {
+                            "run":          run_idx,
+                            "collision":    1 if telemetry.get("agent_collision", False) else 0,
+                            "success":      1 if telemetry.get("agent_success",   False) else 0,
+                            "avg_speed":    f"{telemetry.get('agent_avg_speed',    0.0):.4f}",
+                            "travel_time":  f"{telemetry.get('agent_travel_time',  0.0):.4f}",
+                            "waiting_time": f"{telemetry.get('agent_waiting_time', 0.0):.4f}",
+                        }
+
+                    except Exception as exc:
+                        print(f"  Run {run_idx:02d} | ERROR: {exc}")
+
+                    finally:
+                        # Always terminate SUMO/traci first, then stop the algo.
+                        # Each step is wrapped individually so one failure doesn't
+                        # prevent the others from running.
+                        try:
+                            if env is not None:
+                                env.terminate()
+                        except Exception:
+                            pass
+
+                        try:
+                            if algo is not None:
+                                algo.stop()
+                        except Exception:
+                            pass
+
+                        # Drop all references so Python's GC can reclaim memory.
+                        del env, algo
+                        gc.collect()
+                    # ── end of guaranteed teardown ────────────────────────────
+
+                    if row is None:
+                        print(f"  Run {run_idx:02d} | SKIPPED (no telemetry — see error above)")
+                        continue
 
                     with open(csv_path, "a", newline="") as f:
                         csv.DictWriter(f, fieldnames=CSV_HEADER).writerow(row)
 
                     print(f"  Run {run_idx:02d} | col={row['collision']} suc={row['success']}"
                           f" spd={row['avg_speed']} tt={row['travel_time']}")
-                    
-                    algo.stop()
-                    gc.collect()
 
                 print(f"  [CSV] → {csv_path}")
 
     print("\n--- EVALUATION COMPLETE ---")
+    plot_eval_results(
+    output_dir=output_dir,
+    version_filter=version,          # e.g. "heuristic_discrete"
+    save_path=os.path.join(output_dir, f"results_{version}.png"),
+    show=False,                       # set True if you have a display
+    )
     ray.shutdown()
 
 
