@@ -88,7 +88,7 @@ env_params = EnvParams(additional_params={"max_accel": max_accel, "max_decel": m
     "target_velocity": max_speed, "sort_vehicles": False}, horizon=horizon, warmup_steps=5,
     sims_per_step=number_of_sim_steps_per_RlAction_step, evaluate=False, clip_actions=True)
 
-sim_params = SumoParams(port=None, sim_step=sim_step, emission_path=os.path.join(root_dir, "results"),
+sim_params = SumoParams(port=None, sim_step=sim_step, emission_path=None,
     lateral_resolution=None, no_step_log=True, render=False, save_render=False,
     sight_radius=25, show_radius=False, pxpm=2, force_color_update=False,
     overtake_right=False, seed=42, restart_instance=True, print_warnings=False,
