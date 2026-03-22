@@ -9,6 +9,7 @@ Usage:
 """
 import argparse
 import os
+import math
 import sys
 import csv
 import random
@@ -60,10 +61,10 @@ os.makedirs(output_dir, exist_ok=True)
 scenarios = {"rbl": "100m_right_before_left.net.xml"}
 
 intentions = {
-    "all_straight": AllStraghtNetwork,
+   # "all_straight": AllStraghtNetwork,
     "all_left": AllLeftNetwork,
-    "uniform_random": UniformRandomNetwork,
-    "asymetric_random": AsymmetricRandomNetwork 
+   # "uniform_random": UniformRandomNetwork,
+   # "asymetric_random": AsymmetricRandomNetwork 
 }
 
 high_rate=500; medium_rate=300; low_rate=150
@@ -132,9 +133,66 @@ def _build_inflows(traffic_rate):
     inf.add(veh_type="NonRL", edge="E#L-X", probability=traffic_rate["W"]/3600,
             depart_lane=0, depart_speed=initial_speed, begin=1, color="green")
     inf.add(veh_type="RL", edge="E#L-X", probability=0.8,
-            depart_lane=0, depart_speed=initial_speed, begin=warmup_steps, color="red")
+            depart_lane=0, depart_speed=initial_speed, begin=warmup_steps, color="green")
     return inf
 
+def _risk_bar(value, width=10):
+    """value in [0,1] where 0=dangerous, 1=safe. Returns a colored bar string."""
+    filled = int((1 - value) * width)
+    bar = "█" * filled + "░" * (width - filled)
+    if value < 0.3:
+        color = "\033[91m"   # red
+    elif value < 0.6:
+        color = "\033[93m"   # yellow
+    else:
+        color = "\033[92m"   # green
+    return f"{color}{bar}\033[0m"
+
+def _angle_arrow(sin_val, cos_val):
+    angle_deg = math.degrees(math.atan2(sin_val, cos_val))
+    # atan2: east=0°, north=90°, west=±180°, south=-90°
+    # Shift so that east (0°) maps to index 0, going CCW
+    idx = round(angle_deg / 45) % 8
+    arrows = ["→", "↗", "↑", "↖", "←", "↙", "↓", "↘"]
+    return arrows[idx]
+
+def print_neighbor_table(step_num, obs, reward, neighbors_info, terminated, truncated):
+    os.system("cls" if os.name == "nt" else "clear")
+
+    # --- Ego stats from obs vector ---
+    dis_to_goal = obs[0]
+    ego_speed = obs[1]
+    ego_sin, ego_cos = obs[2], obs[3]
+    ego_dir = _angle_arrow(ego_sin, ego_cos)
+
+    print(f"╔{'═'*72}╗")
+    print(f"║  Step {step_num:<6}   Reward: {reward:+.3f}   "
+          f"{'TERMINATED' if terminated else 'TRUNCATED' if truncated else 'running  ':<12}║")
+    print(f"╠══════════════════════════════════════════════════════════╣")
+    print(f"║  EGO   dir:{ego_dir}  speed:{ego_speed:.2f}  dist_to_goal:{dis_to_goal:.2f}   ║")
+    print(f"╠══════════════════════════════════════════════════════════╣")
+
+    if not neighbors_info:
+        print(f"║  No conflicting neighbors in perception radius.          ║")
+    else:
+        print(f"║  {'#':<3} {'dir':<4} {'speed':>6} {'dist':>6} {'TTC':>6} {'d(gap)':>8}  risk-bar      {'edge':<12}║")
+        print(f"║  {'─'*70}║")
+        for i, n in enumerate(neighbors_info):
+            direction = _angle_arrow(n['sinx'], n['cosx'])
+            speed_pct = n['v']
+            dist_norm = n['distance']
+            ttc = n['ttc']
+            d = n['s']
+            bar = _risk_bar(ttc)
+            d_label = f"{d:+.2f}"
+            label = (f"({'behind' if d < -0.1 else 'ahead' if d > 0.1 else 'cross':>6})")
+            edge = n['edge'][:12].ljust(12)   # truncate long edge IDs to keep layout stable
+
+            print(f"║  {i+1:<3} {direction:<4} {speed_pct:>6.2f} {dist_norm:>6.2f}"
+                  f" {ttc:>6.2f} {d_label:>8} {label}  {bar}  {edge}║")
+    
+    print(f"╚{'═'*72}╝")
+    print()
 
 def main():
     version = args.version
@@ -257,11 +315,15 @@ def main():
 
                         obs, _ = env.reset()
                         done = False
+                        step_num = 0
                         while not done:
-                            action = algo.compute_single_action(obs, explore=False)
-                            obs, reward, terminated, truncated, info = env.step(action)
-                            done = terminated or truncated
-
+                             action = algo.compute_single_action(obs, explore=False)
+                             obs, reward, terminated, truncated, info = env.step(action)
+                             done = terminated or truncated
+                             step_num += 1
+                            
+                             neighbors_info = info.get("neighbors", [])
+                             print_neighbor_table(step_num, obs, reward, neighbors_info, terminated, truncated)
                         telemetry = info.get("telemetry", {})
                         row = {
                             "run":          run_idx,

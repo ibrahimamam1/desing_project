@@ -165,6 +165,10 @@ class Env_N(gym.Env, metaclass=ABCMeta):
             "agent_collision": False,    # Did agent collide?
             "agent_success": False,      # Did agent reach goal?
             "agent_total_distance": 0.0, # Approximate distance travelled
+            "reward_speed_total": 0.0,
+            "reward_time_total": 0.0,
+            "reward_action_total": 0.0,
+            "reward_terminal_total": 0.0,
         }
 
     def _update_telemetry_step(self):
@@ -233,7 +237,11 @@ class Env_N(gym.Env, metaclass=ABCMeta):
             "agent_avg_speed": float(avg_speed),
             "agent_avg_accel": float(avg_accel),
             "agent_total_distance": self.telemetry["agent_total_distance"],
-            "episode_length": self.time_counter
+            "episode_length": self.time_counter,
+            "reward_speed": self.telemetry["reward_speed_total"],
+            "reward_time": self.telemetry["reward_time_total"],
+            "reward_action": self.telemetry["reward_action_total"],
+            "reward_terminal": self.telemetry["reward_terminal_total"]
         }
     
     def step(self, action):
@@ -268,7 +276,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
        
         
         # 3. Retrieve Observations
-        obs = self.get_state() 
+        obs = self.get_state()
         colliding_ids = set(self.k.kernel_api.simulation.getCollidingVehiclesIDList())
         rl_ids_set = set(self.k.vehicle.get_rl_ids())
         rl_crash_ids = colliding_ids & rl_ids_set  # Only RL vehicles that actually crashed
@@ -298,7 +306,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         infos = {}
         if telemetry_stats is not None:
             infos["telemetry"] = telemetry_stats
-        
+        infos["neighbors"] = self.last_neighbors_info 
         return obs, reward, terminated, truncated, infos
 
     def _apply_non_rl_controls(self):
@@ -331,6 +339,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         super().reset(seed=seed)
         
         self.last_action = 0.0
+        self.last_neighbors_info = []
         # Ensure observation space is respected (Box vs Discrete check might be needed depending on subclass)
         if hasattr(self.observation_space, 'shape'):
             self.last_obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)

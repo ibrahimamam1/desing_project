@@ -68,163 +68,235 @@ class AlphaEnv_v01(Env_N):
 
         self.last_action = 0.0
         self.last_obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
+        self.last_neighbors_info = []
 
     def get_state(self):
-        """
-        Return the observation for the single RL agent.
-        Returns a flat np.array matching self.observation_space.
-        """
         rl_ids = self.k.vehicle.get_rl_ids()
-        
-        # If the vehicle despawned (reached goal or crashed), return the 
-        # last valid observation to prevent value function spikes.
-        if not self.agent_id in rl_ids:
-            return self.last_obs
-
-        # Get current observation
-        obs = self._get_local_observation(self.agent_id)
-        
-        # Cache the valid observation for the terminal step
+        if self.agent_id not in rl_ids:
+            return self.last_obs, self.last_neighbors_info  # also cache neighbors
+     
+        obs, neighbors_info = self._get_local_observation(self.agent_id)
         self.last_obs = obs
-        
+        self.last_neighbors_info = neighbors_info  # cache for terminal step
         return obs
 
     def _get_local_observation(self, ego_id):
+
         # --- 1. Ego State ---
-        # Ego Distance to goal
         route = self.k.vehicle.get_route(ego_id)
         total_route_length = sum([self.k.network.edge_length(edge) for edge in route])
         total_route_length = max(total_route_length, 1e-4)
-
+    
         ego_dis = self.k.vehicle.get_distance(ego_id)
-        # Also protect against Flow's default -1001 for missing vehicles
-        if ego_dis == -1001: 
-            ego_dis = 0.0 
-
+        if ego_dis == -1001:
+            ego_dis = 0.0
+    
         dis_to_goal = total_route_length - ego_dis
-        dis_to_goal_norm = np.clip(dis_to_goal / total_route_length, -1.0, 1.0)        # Ego Speed (normalized, clipped)
-        
+        dis_to_goal_norm = np.clip(dis_to_goal / total_route_length, -1.0, 1.0)
+    
         ego_speed = self.k.vehicle.get_speed(ego_id)
         if ego_speed is None or ego_speed < 0:
             ego_speed = 0.0
         max_speed = self.k.network.max_speed()
         ego_speed_norm = np.clip(ego_speed / max_speed, -1.0, 1.0)
-        
-        # Ego heading (Convert SUMO North=0, CW to Math East=0, CCW)
+    
         ego_heading = self.k.vehicle.get_heading(ego_id)
-        ego_angle_rad = np.radians((-ego_heading) + 90)    
+        ego_angle_rad = np.radians((-ego_heading) + 90)
         ego_cos = np.cos(ego_angle_rad)
         ego_sin = np.sin(ego_angle_rad)
-        
-        # Add heading to the ego observation vector (Now 4 features)
+    
         obs_vector = [dis_to_goal_norm, ego_speed_norm, ego_sin, ego_cos]
-        
-        # --- 2. Neighbor States (ego-centric relative frame) ---
+    
+        # --- 2. Neighbor States (Frenet-based) ---
         neighbors_info = []
         all_ids = self.k.vehicle.get_ids()
-        
+    
         pos_ret = self.k.vehicle.get_2d_position(ego_id)
         if pos_ret is None or pos_ret == -1001 or pos_ret == (-1001.0, -1001.0):
-            return self.last_obs 
+            return self.last_obs
+    
         ego_x, ego_y = pos_ret
-
+    
         for other_id in all_ids:
             if other_id == ego_id:
                 continue
-            
+    
             other_pos = self.k.vehicle.get_2d_position(other_id)
             if other_pos is None or other_pos == -1001:
                 continue
-
+    
             other_x, other_y = other_pos
-            dx_world = other_x - ego_x
-            dy_world = other_y - ego_y
-            distance = np.sqrt(dx_world**2 + dy_world**2)
-            
-            if self._is_conflicting(ego_id, other_id) and distance <= self.perception_radius:
-                edge = self.k.vehicle.get_edge(other_id)
-                
-                # Neighbor speed (normalized)
-                other_speed = self.k.vehicle.get_speed(other_id)
-                if other_speed is None or other_speed < 0:
-                    other_speed = 0.0
-
-                other_speed_norm = np.clip(other_speed / max_speed, 0.0, 1.0)
-                
-                # Neighbor heading to Math angle
-                other_heading = self.k.vehicle.get_heading(other_id)
-                other_angle_rad = np.radians((-other_heading) + 90)
-                other_sin = np.sin(other_angle_rad)
-                other_cos = np.cos(other_angle_rad)
-                
-                # --- GEOMETRIC PROJECTION ---
-                t, u = self._get_distances_to_collision_point(
-                    ego_x, ego_y, ego_angle_rad,
-                    other_x, other_y, other_angle_rad
-                )
-                
-                # INTERSECTING PATHS
-                if t is not None:
-                    if t > -2.0 and u > -2.0:
-                        d_raw = t - u
-                        d = np.clip(d_raw / self.perception_radius, -1.0, 1.0)
-                        
-                        # Calculate TTC based on Ego's distance to the conflict point (t)
-                        # We clip to 10 seconds max to normalize it properly.
-                        raw_ttc = max(0.0, t) / (ego_speed + 1e-6)
-                        ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0) 
-                    else:
-                        d = 1.0  # Safe
-                        ttc = 1.0 # Safe
-
-                # PARALLEL PATHS (Leading / Following)
-                else:
-                    longitudinal_proj = dx_world * ego_cos + dy_world * ego_sin
-                    sign = np.sign(longitudinal_proj)
-                    d_raw = sign * abs(longitudinal_proj)
-                    d = np.clip(d_raw / self.perception_radius, -1.0, 1.0)
-                    
-                    # TTC based on distance to the car directly ahead/behind
-                    raw_ttc = abs(longitudinal_proj) / (ego_speed + 1e-6)
-                    ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0)
-
-                # Append the 5 features
-                neighbors_info.append({
-                    'v': other_speed_norm,
-                    'dx': dx_world/self.perception_radius,
-                    'dy': dy_world/self.perception_radius,
-                    'ttc': ttc,
-                    'd': d,
-                    'sinx': other_sin,
-                    'cosx': other_cos,
-                    'edge': edge,
-                    'distance': distance,
-                })
-
-        # Sort by physical distance (closest first), take top k
+            distance = np.sqrt((other_x - ego_x)**2 + (other_y - ego_y)**2)
+    
+            if not (self._is_conflicting(ego_id, other_id) and distance <= self.perception_radius):
+                continue
+    
+            # Neighbor speed
+            other_speed = self.k.vehicle.get_speed(other_id)
+            if other_speed is None or other_speed < 0:
+                other_speed = 0.0
+            other_speed_norm = np.clip(other_speed / max_speed, 0.0, 1.0)
+    
+            # Neighbor heading
+            other_heading = self.k.vehicle.get_heading(other_id)
+            other_angle_rad = np.radians((-other_heading) + 90)
+            other_sin = np.sin(other_angle_rad)
+            other_cos = np.cos(other_angle_rad)
+    
+            # --- FRENET CONFLICT ---
+            conflict = self._get_frenet_conflict(ego_id, other_id)
+    
+            if conflict is not None:
+                ego_dist_to_cp, other_dist_to_cp = conflict
+    
+                # s: signed lead/lag — positive means ego arrives first (safe)
+                #    negative means neighbor arrives first (ego must yield)
+                s_raw = ego_dist_to_cp - other_dist_to_cp
+                s = np.clip(s_raw / self.perception_radius, -1.0, 1.0)
+    
+                # TTC: ego's remaining distance to conflict point / ego speed
+                raw_ttc = ego_dist_to_cp / (ego_speed + 1e-6)
+                ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0)
+            else:
+                # Truly non-conflicting routes (e.g. same-direction following)
+                # Fall back to longitudinal gap along ego's heading
+                longitudinal_proj = (other_x - ego_x) * ego_cos + (other_y - ego_y) * ego_sin
+                s_raw = np.sign(longitudinal_proj) * abs(longitudinal_proj)
+                s = np.clip(s_raw / self.perception_radius, -1.0, 1.0)
+                raw_ttc = abs(longitudinal_proj) / (ego_speed + 1e-6)
+                ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0)
+    
+            edge = self.k.vehicle.get_edge(other_id)
+    
+            neighbors_info.append({
+                'v':        other_speed_norm,
+                's':        s,
+                'ttc':      ttc,
+                'sinx':     other_sin,
+                'cosx':     other_cos,
+                'edge':     edge,
+                'distance': distance,
+            })
+    
+        # Sort by physical distance, take top k
         neighbors_info.sort(key=lambda n: n['distance'])
         neighbors_info = neighbors_info[:self.max_neighbours]
-        
+    
         for neighbor in neighbors_info:
             obs_vector.extend([
                 neighbor['v'],
-                neighbor['d'],
+                neighbor['s'],
                 neighbor['ttc'],
                 neighbor['sinx'],
-                neighbor['cosx']
+                neighbor['cosx'],
             ])
-        
-        # Pad if fewer than max_neighbours: [v=0, d=1(safe), ttc=1(safe), sin=0, cos=0]
+    
+        # Pad missing neighbors: [v=0, s=1(safe), ttc=1(safe), sin=0, cos=0]
         num_actual = len(neighbors_info)
         if num_actual < self.max_neighbours:
-            missing_count = self.max_neighbours - num_actual
-            for _ in range(missing_count):
+            for _ in range(self.max_neighbours - num_actual):
                 obs_vector.extend([0.0, 1.0, 1.0, 0.0, 0.0])
-        
+    
         obs_array = np.array(obs_vector, dtype=np.float32)
-        assert np.all(np.isfinite(obs_array)), f"Non-finite obs: {obs_array}" 
-           
-        return obs_array 
+        assert np.all(np.isfinite(obs_array)), f"Non-finite obs: {obs_array}"
+    
+        return obs_array, neighbors_info
+
+    def _get_route_waypoints(self, route):
+        """
+        Build a flat list of (x, y, cumulative_s) waypoints for a route.
+        Uses SUMO's laneShape for the first lane of each edge.
+        """
+        waypoints = []
+        s = 0.0
+        for edge_id in route:
+            try:
+                # get shape of lane 0 of this edge
+                shape = self.k.kernel_api.lane.getShape(edge_id + "_0")
+            except Exception:
+                print('get_route_waypoint: Failed to get waypoint')
+                continue
+            for i, (x, y) in enumerate(shape):
+                if i == 0 and len(waypoints) > 0:
+                    # skip duplicate junction point
+                    pass
+                else:
+                    waypoints.append((x, y, s))
+                if i < len(shape) - 1:
+                    nx, ny = shape[i + 1]
+                    s += np.sqrt((nx - x)**2 + (ny - y)**2)
+        return waypoints  # list of (x, y, cumulative_s_from_route_start)
+
+
+    def _segments_intersect(self, p1, p2, p3, p4):
+        """
+        Find intersection of segment p1->p2 and segment p3->p4.
+        Returns (t, u) parameters (both in [0,1]) or None.
+        t: fraction along p1->p2, u: fraction along p3->p4.
+        """
+        x1, y1 = p1; x2, y2 = p2
+        x3, y3 = p3; x4, y4 = p4
+        denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+        if abs(denom) < 1e-9:
+            return None  # parallel
+        t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
+        u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom
+        if 0.0 <= t <= 1.0 and 0.0 <= u <= 1.0:
+            return t, u
+        return None
+    
+    def _get_frenet_conflict(self, ego_id, other_id):
+        """
+        Find the conflict point between ego and neighbor using route polylines.
+        Returns (ego_s_to_cp, other_s_to_cp) where s is arc-length remaining
+        to the conflict point, or None if routes don't intersect.
+        """
+        ego_route   = self.k.vehicle.get_route(ego_id)
+        other_route = self.k.vehicle.get_route(other_id)
+    
+        ego_wp   = self._get_route_waypoints(ego_route)
+        other_wp = self._get_route_waypoints(other_route)
+    
+        if len(ego_wp) < 2 or len(other_wp) < 2:
+            return None
+    
+        # Current odometer readings
+        ego_s_traveled   = self.k.vehicle.get_distance(ego_id)
+        other_s_traveled = self.k.vehicle.get_distance(other_id)
+        if ego_s_traveled == -1001: ego_s_traveled = 0.0
+        if other_s_traveled == -1001: other_s_traveled = 0.0
+    
+        # Search all segment pairs for first intersection
+        best = None  # (ego_s_at_cp, other_s_at_cp)
+    
+        for i in range(len(ego_wp) - 1):
+            ex1, ey1, es1 = ego_wp[i]
+            ex2, ey2, es2 = ego_wp[i + 1]
+            seg_len_e = es2 - es1
+    
+            for j in range(len(other_wp) - 1):
+                ox1, oy1, os1 = other_wp[j]
+                ox2, oy2, os2 = other_wp[j + 1]
+                seg_len_o = os2 - os1
+    
+                result = self._segments_intersect(
+                    (ex1, ey1), (ex2, ey2),
+                    (ox1, oy1), (ox2, oy2)
+                )
+                if result is not None:
+                    t, u = result
+                    ego_s_at_cp   = es1 + t * seg_len_e  # s from route start
+                    other_s_at_cp = os1 + u * seg_len_o
+    
+                    # Only care about conflict points ahead of both vehicles
+                    if ego_s_at_cp >= ego_s_traveled and other_s_at_cp >= other_s_traveled:
+                        ego_remaining   = ego_s_at_cp   - ego_s_traveled
+                        other_remaining = other_s_at_cp - other_s_traveled
+                        # keep the earliest conflict point for ego
+                        if best is None or ego_remaining < best[0]:
+                            best = (ego_remaining, other_remaining)
+    
+        return best  # (ego_dist_to_cp, other_dist_to_cp) or None
 
     def _get_distances_to_collision_point(self, x1, y1, theta1, x2, y2, theta2):
         """

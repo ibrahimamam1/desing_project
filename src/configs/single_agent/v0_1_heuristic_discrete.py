@@ -7,6 +7,7 @@ from datetime import datetime
 import shutil
 import random
 import math 
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser(description="Train or evaluate the AlphaEnv PPO agent (Discrete).")
 group = parser.add_mutually_exclusive_group(required=True)
@@ -169,35 +170,45 @@ class TrafficCallbacks(DefaultCallbacks):
         info = episode.last_info_for()
         if info is None or "telemetry" not in info:
             return
+        
         telemetry = info["telemetry"]
         if telemetry is None:
             return
+            
+        # Existing metrics
         episode.custom_metrics["collision"] = 1.0 if telemetry.get("agent_collision", False) else 0.0
         episode.custom_metrics["success"] = 1.0 if telemetry.get("agent_success", False) else 0.0
         episode.custom_metrics["avg_speed"] = float(telemetry.get("agent_avg_speed", 0.0))
+        
+        # New Reward metrics
+        episode.custom_metrics["reward_speed"] = telemetry.get("reward_speed", 0.0)
+        episode.custom_metrics["reward_time"] = telemetry.get("reward_time", 0.0)
+        episode.custom_metrics["reward_action"] = telemetry.get("reward_action", 0.0)
+        episode.custom_metrics["reward_terminal"] = telemetry.get("reward_terminal", 0.0)
 
     def on_train_result(self, *, algorithm, result: dict, **kwargs) -> None:
+        # Keep high-level result keys
         keep = {"episode_reward_mean", "episode_len_mean", "custom_metrics",
                 "info", "training_iteration", "timesteps_total"}
         for k in [k for k in result if k not in keep]:
             result.pop(k)
+            
+        # Filter the custom_metrics dictionary
         if "custom_metrics" in result and isinstance(result["custom_metrics"], dict):
-            custom_keep = {"collision_mean", "success_mean", "avg_speed_mean",
-                           "travel_time_mean", "waiting_time_mean"}
+            custom_keep = {
+                # Your existing metrics
+                "collision_mean", "success_mean", "avg_speed_mean",
+                "travel_time_mean", "waiting_time_mean",
+                
+                # --- NEW REWARD METRICS ---
+                "reward_speed_mean", 
+                "reward_time_mean", 
+                "reward_action_mean", 
+                "reward_terminal_mean"
+            }
+            
             for k in [k for k in result["custom_metrics"] if k not in custom_keep]:
                 result["custom_metrics"].pop(k)
-        if "info" in result and isinstance(result["info"], dict):
-            info = result["info"]
-            if "learner" in info and isinstance(info["learner"], dict):
-                learner = info["learner"]
-                if "default_policy" in learner and isinstance(learner["default_policy"], dict):
-                    info_keep = {"entropy", "mean_kl_loss", "policy_loss", "total_loss", "vf_loss", "vf_explained_var"}
-                    for k in [k for k in learner["default_policy"] if k not in info_keep]:
-                        learner["default_policy"].pop(k)
-                for k in [k for k in learner if k != "default_policy"]:
-                    learner.pop(k) 
-            for k in [k for k in result["info"] if k != "learner"]:
-                result["info"].pop(k)        
 
 def create_flow_env(env_config):
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -296,7 +307,7 @@ def train():
     print(f"TensorBoard → {TENSORBOARD_RUN_DIR}")
     print(f"Train Stats CSV → {TRAIN_STATS_CSV}\n")
     
-    num_iterations = 1600
+    num_iterations = 1200
     num_stages = len(traffic_rates)
     iters_per_stage = num_iterations // num_stages
     best_reward = -float('inf')
@@ -315,22 +326,8 @@ def train():
         if checkpoint_path is not None:
             algo.restore(checkpoint_path)
 
-        for i in range(iters_per_stage):
-            global_iter = stage_idx * iters_per_stage + i
+        for i in tqdm(range(iters_per_stage)):
             result = algo.train()
-            
-            current_reward = result.get("episode_reward_mean")
-            custom = result.get("custom_metrics", {})
-            
-            learner_stats = result.get("info", {}).get("learner", {}).get("default_policy", {})
-            explained_var = learner_stats.get("vf_explained_var", float("nan"))
-            entropy       = learner_stats.get("entropy", float("nan"))
-            total_loss    = learner_stats.get("total_loss", float("nan"))
-            # -----------------------
-
-            print(f"stage={stage_idx}, iter={i}, reward={current_reward:.3f}, "
-                  f"loss={total_loss:.4f}, entropy={entropy:.4f}, expl_var={explained_var:.4f}", 
-                  flush=True)
 
         checkpoint_path = algo.save(checkpoint_dir=os.path.join(CHECKPOINT_ROOT, f"stage_{stage_idx}"))
         algo.stop()
