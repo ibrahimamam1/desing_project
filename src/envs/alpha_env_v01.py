@@ -429,54 +429,67 @@ class AlphaEnv_v01(Env_N):
     def _build_conflict_map(self):
         """
         Statically maps a (Source, Destination) pair to a list of conflicting 
-        (Source, Destination) pairs.
-        
-        Format:
-        {
-            (My_Source, My_Dest): [ (Enemy_Source, Enemy_Dest), ... ]
-        }
+        (Source, Destination) pairs for a full 4-way intersection.
         """
-        # REPLACE THESE WITH YOUR REAL SUMO EDGE IDs
-        # Example assumes a 4-way intersection
+        # Edge IDs
         N_in, N_out = 'E#T-X', 'E#X-T'
         S_in, S_out = 'E#D-X', 'E#X-D'
         E_in, E_out = 'E#R-X',  'E#X-R'
         W_in, W_out = 'E#L-X',  'E#X-L'
 
-        # Define Flows (Source, Destination)
-        # Straight Flows
-        NS = (N_in, S_out) # North to South
-        SN = (S_in, N_out) # South to North
-        EW = (E_in, W_out) # East to West
-        WE = (W_in, E_out) # West to East
+        # 1. Define All Flows (Source, Destination)
+        # Straight
+        NS = (N_in, S_out)
+        SN = (S_in, N_out)
+        EW = (E_in, W_out)
+        WE = (W_in, E_out)
         
-        # Left Turns (usually conflict with straights)
-        NE = (N_in, E_out) # North turning Left to East
-        SW = (S_in, W_out) # South turning Left to West
-        WN = (W_in, N_out) # West turning Left to North
-        ES = (E_in, S_out) # East turning Left to South
+        # Left Turns
+        NE = (N_in, E_out)
+        SW = (S_in, W_out)
+        WN = (W_in, N_out)
+        ES = (E_in, S_out)
+        
+        # Right Turns (Added for completeness)
+        NW = (N_in, W_out)
+        SE = (S_in, E_out)
+        EN = (E_in, N_out)
+        WS = (W_in, S_out)
 
-        # The Conflict Dictionary
         mapping = {}
 
-        # 1. North-South Straight Conflicts
-        # Conflicts with: West-East, East-West, and Left turns crossing it
-        mapping[NS] = [WE, EW, SW, ES] 
-        mapping[SN] = [WE, EW, NE, WN]
+        # 2. Straight Conflicts
+        # A straight flow conflicts with: 
+        # - Both crossing straights
+        # - The oncoming left turn (crossing its path)
+        # - Both crossing left turns
+        mapping[NS] = [WE, EW, SW, WN, ES] 
+        mapping[SN] = [WE, EW, NE, WN, ES]
+        mapping[EW] = [NS, SN, WN, NE, SW]
+        mapping[WE] = [NS, SN, ES, NE, SW]
 
-        # 2. East-West Straight Conflicts
-        # Conflicts with: North-South, South-North, and Left turns crossing it
-        mapping[EW] = [NS, SN, NE, SW]
-        mapping[WE] = [NS, SN, ES, WN]
+        # 3. Left Turn Conflicts
+        # A left turn conflicts with:
+        # - The oncoming straight
+        # - Both crossing straights
+        # - Adjacent left turns (the ones to their immediate left and right)
+        # - The oncoming right turn (merging into the same destination edge)
+        # Note: Opposing lefts (e.g., NE and SW) usually pass each other safely.
+        mapping[NE] = [SN, WE, EW, WN, ES, SE] 
+        mapping[SW] = [NS, WE, EW, WN, ES, NW]
+        mapping[WN] = [EW, NS, SN, NE, SW, WS]
+        mapping[ES] = [WE, NS, SN, NE, SW, EN]
 
-        # 3. Left Turn Conflicts 
-        # (Conflict with oncoming straight and crossing straights)
-        mapping[NE] = [SN, WE, EW] 
-        mapping[SW] = [NS, WE, EW]
-        mapping[WN] = [ES, NS, SN]
-        mapping[ES] = [WN, NS, SN]
+        # 4. Right Turn Conflicts
+        # A right turn conflicts with:
+        # - Straight cross traffic approaching from the left
+        # - Oncoming left turns (merging into the same destination edge)
+        mapping[NW] = [EW, SW]
+        mapping[SE] = [WE, NE]
+        mapping[EN] = [SN, WN]
+        mapping[WS] = [NS, ES]
 
-        return mapping 
+        return mapping
 
     def additional_command(self):
         """
