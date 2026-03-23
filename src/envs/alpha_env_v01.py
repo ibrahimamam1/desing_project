@@ -73,7 +73,7 @@ class AlphaEnv_v01(Env_N):
     def get_state(self):
         rl_ids = self.k.vehicle.get_rl_ids()
         if self.agent_id not in rl_ids:
-            return self.last_obs, self.last_neighbors_info  # also cache neighbors
+            return self.last_obs
      
         obs, neighbors_info = self._get_local_observation(self.agent_id)
         self.last_obs = obs
@@ -113,7 +113,7 @@ class AlphaEnv_v01(Env_N):
     
         pos_ret = self.k.vehicle.get_2d_position(ego_id)
         if pos_ret is None or pos_ret == -1001 or pos_ret == (-1001.0, -1001.0):
-            return self.last_obs
+            return self.last_obs, {}
     
         ego_x, ego_y = pos_ret
     
@@ -155,7 +155,9 @@ class AlphaEnv_v01(Env_N):
                 s = np.clip(s_raw / self.perception_radius, -1.0, 1.0)
     
                 # TTC: ego's remaining distance to conflict point / ego speed
-                raw_ttc = ego_dist_to_cp / (ego_speed + 1e-6)
+                ego_eta   = ego_dist_to_cp / (ego_speed + 1e-6)
+                other_eta = other_dist_to_cp / (other_speed + 1e-6)
+                raw_ttc   = abs(ego_eta - other_eta)
                 ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0)
             else:
                 # Truly non-conflicting routes (e.g. same-direction following)
@@ -163,9 +165,18 @@ class AlphaEnv_v01(Env_N):
                 longitudinal_proj = (other_x - ego_x) * ego_cos + (other_y - ego_y) * ego_sin
                 s_raw = np.sign(longitudinal_proj) * abs(longitudinal_proj)
                 s = np.clip(s_raw / self.perception_radius, -1.0, 1.0)
-                raw_ttc = abs(longitudinal_proj) / (ego_speed + 1e-6)
-                ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0)
-    
+                if longitudinal_proj > 0:
+                    # Neighbor is AHEAD — ego may run into them
+                    closing_speed = ego_speed - other_speed
+                else:
+                    # Neighbor is BEHIND — they may catch up to ego
+                    closing_speed = other_speed - ego_speed
+
+                if closing_speed <= 0:
+                    raw_ttc = 10.0  # not closing, no threat
+                else:
+                    raw_ttc = distance / closing_speed 
+                ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0)    
             edge = self.k.vehicle.get_edge(other_id)
     
             neighbors_info.append({
