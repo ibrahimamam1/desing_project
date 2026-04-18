@@ -2,22 +2,26 @@
 <net version="1.20" junctionCornerDetail="5" limitTurnSpeed="5.50" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/net_file.xsd">
 
     <location netOffset="0.00,0.00" convBoundary="-100.00,-100.00,100.00,100.00" origBoundary="-10000000000.00,-10000000000.00,10000000000.00,10000000000.00" projParameter="!"/>
+    
     <edge id=":X_0" function="internal">
         <lane id=":X_0_0" index="0" speed="6.51" length="17.06" shape="-1.60,12.00 -1.90,8.00 -3.00,5.40 -5.20,3.15 -8.00,1.90 -12.00,1.60"/>
     </edge>
     <edge id=":X_1" function="internal">
         <lane id=":X_1_0" index="0" speed="13.89" length="24.00" shape="-1.60,12.00 -1.60,-12.00"/>
     </edge>
-   
-    <edge id=":X_2" function="internal"><lane id=":X_2_0" index="0" speed="8.00" length="25.43" shape="-1.60,12.00 -1.60,7.50 0.50,3.50 3.50,0.50 7.50,-1.60 12.00,-1.60"/></edge>
+    <edge id=":X_2" function="internal">
+        <lane id=":X_2_0" index="0" speed="8.00" length="21.36" shape="-1.60,12.00 -0.56,6.80 2.38,2.38 6.80,-0.56 12.00,-1.60"/>
+    </edge>
+    
     <edge id=":X_3" function="internal">
         <lane id=":X_3_0" index="0" speed="6.51" length="17.06" shape="12.00,1.60  8.00,1.90  5.40,3.00  3.15,5.20 1.90,8.00 1.60,12.00"/>
     </edge>
     <edge id=":X_4" function="internal">
         <lane id=":X_4_0" index="0" speed="13.89" length="24.00" shape="12.00,1.60 -12.00,1.60"/>
     </edge>
-   
-    <edge id=":X_5" function="internal"><lane id=":X_5_0" index="0" speed="8.00" length="25.43" shape="12.00,1.60 7.50,1.60 3.50,-0.50 0.50,-3.50 -1.60,-7.50 -1.60,-12.00"/></edge>
+    <edge id=":X_5" function="internal">
+        <lane id=":X_5_0" index="0" speed="8.00" length="21.36" shape="12.00,1.60 6.80,0.56 2.38,-2.38 -0.56,-6.80 -1.60,-12.00"/>
+    </edge>
 
     <edge id=":X_6" function="internal">
         <lane id=":X_6_0" index="0" speed="6.51" length="17.06" shape="1.60,-12.00 1.90,-8.00 3.00,-5.40 5.20,-3.15 8.00,-1.90 12.00,-1.60"/>
@@ -25,14 +29,20 @@
     <edge id=":X_7" function="internal">
         <lane id=":X_7_0" index="0" speed="13.89" length="24.00" shape="1.60,-12.00 1.60,12.00"/>
     </edge>
-    <edge id=":X_8" function="internal"><lane id=":X_8_0" index="0" speed="8.00" length="25.43" shape="1.60,-12.00 1.60,-7.50 -0.50,-3.50 -3.50,-0.50 -7.50,1.60 -12.00,1.60"/></edge>
+    <edge id=":X_8" function="internal">
+        <lane id=":X_8_0" index="0" speed="8.00" length="21.36" shape="1.60,-12.00 0.56,-6.80 -2.38,-2.38 -6.80,0.56 -12.00,1.60"/>
+    </edge>
+    
     <edge id=":X_9" function="internal">
         <lane id=":X_9_0" index="0" speed="6.51" length="17.06" shape="-12.00,-1.60 -8.00,-1.90 -5.40,-3.00 -3.15,-5.20 -1.90,-8.00 -1.60,-12.00"/>
     </edge>
     <edge id=":X_10" function="internal">
         <lane id=":X_10_0" index="0" speed="13.89" length="24.00" shape="-12.00,-1.60 12.00,-1.60"/>
     </edge>
-    <edge id=":X_11" function="internal"><lane id=":X_11_0" index="0" speed="8.00" length="25.43" shape="-12.00,-1.60 -7.50,-1.60 -3.50,0.50 -0.50,3.50 1.60,7.50 1.60,12.00"/></edge>
+    <edge id=":X_11" function="internal">
+        <lane id=":X_11_0" index="0" speed="8.00" length="21.36" shape="-12.00,-1.60 -6.80,-0.56 -2.38,2.38 0.56,6.80 1.60,12.00"/>
+    </edge>
+
     <edge id="E#D-X" from="Down" to="X" priority="-1">
         <lane id="E#D-X_0" index="0" speed="13.89" length="88.00" shape="1.60,-100.00 1.60,-12.00"/>
     </edge>
@@ -45,6 +55,7 @@
     <edge id="E#T-X" from="Top" to="X" priority="-1">
         <lane id="E#T-X_0" index="0" speed="13.89" length="88.00" shape="-1.60,100.00 -1.60,12.00"/>
     </edge>
+    
     <edge id="E#X-D" from="X" to="Down" priority="-1">
         <lane id="E#X-D_0" index="0" speed="13.89" length="88.00" shape="-1.60,-12.00 -1.60,-100.00"/>
     </edge>

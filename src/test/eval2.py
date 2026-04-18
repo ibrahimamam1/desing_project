@@ -1,19 +1,22 @@
+"""
+V0.1 Evaluation Script — mirrors run_flow_tests.py naming convention.
+
+Usage:
+    python v0_1_evaluate.py --checkpoint PATH --version continuous
+    python v0_1_evaluate.py --checkpoint PATH --version discrete
+    python v0_1_evaluate.py --checkpoint PATH --version attention
+    python v0_1_evaluate.py --checkpoint PATH --version attention_discrete
+"""
 import argparse
 import os
+import math
 import sys
+import time
+import subprocess
 import csv
 import random
 import gc
-import resource
-import subprocess
-import time
 from copy import deepcopy
-
-# ─────────────── Raise OS file-descriptor limit ───────────────────────────────
-# Must happen before any other imports that open files/sockets.
-_soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-resource.setrlimit(resource.RLIMIT_NOFILE, (min(_hard, 65536), _hard))
-# ─────────────────────────────────────────────────────────────────────────────
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -29,15 +32,15 @@ from flow.core.params import (
 )
 from flow.controllers import RLController, IDMController
 
-# SB3 Imports
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
-
+import ray
+from ray.tune.registry import register_env
+from ray.rllib.algorithms.ppo import PPOConfig
+from ray.rllib.models import ModelCatalog
 from plot_eval_results import plot_eval_results
 
 # ─────────────────────── CLI ───────────────────────
 parser = argparse.ArgumentParser(description="Evaluate trained v0.1 agent.")
-parser.add_argument("--checkpoint", required=True, help="Path to checkpoint (without .zip).")
+parser.add_argument("--checkpoint", required=True, help="Path to checkpoint.")
 parser.add_argument("--version", required=True,
                     choices=["heuristic_continous", "heuristic_discrete",
                              "attention_continous", "attention_discrete",
@@ -56,19 +59,20 @@ net_file = os.path.join(root_dir, "networks", "100m_right_before_left.net.xml")
 output_dir = os.path.join(root_dir, "output")
 os.makedirs(output_dir, exist_ok=True)
 
-# ─────────────── Scenarios ──────────
+# ─────────────── Scenarios (same as run_flow_tests) ──────────
 scenarios = {"rbl": "100m_right_before_left.net.xml"}
 
 intentions = {
-    "all_straight": AllStraghtNetwork,
-    "all_left": AllLeftNetwork,
-    "uniform_random": UniformRandomNetwork,
-    "asymetric_random": AsymmetricRandomNetwork
+   "all_straight": AllStraghtNetwork,
+   "all_left": AllLeftNetwork,
+   "uniform_random": UniformRandomNetwork,
+   "asymetric_random": AsymmetricRandomNetwork 
 }
 
 high_rate=500; medium_rate=300; low_rate=150
 traffic_rates = {
     "Sc1_All_low":    [{"N": low_rate, "S": low_rate, "W": low_rate, "E": low_rate}],
+    "Sc3_All_medium": [{"N": medium_rate, "S": medium_rate, "W": medium_rate, "E": medium_rate}],
     "Sc2_All_high_3H": [
         {"N": high_rate, "S": high_rate, "W": high_rate, "E": high_rate},
         {"N": high_rate, "S": high_rate, "W": high_rate, "E": medium_rate},
@@ -76,7 +80,6 @@ traffic_rates = {
         {"N": high_rate, "S": medium_rate, "W": high_rate, "E": high_rate},
         {"N": medium_rate, "S": high_rate, "W": high_rate, "E": high_rate},
     ],
-    "Sc3_All_medium": [{"N": medium_rate, "S": medium_rate, "W": medium_rate, "E": medium_rate}],
     "Sc4_Mixed_2H": [
         {"N": high_rate, "S": high_rate, "W": low_rate, "E": low_rate},
         {"N": low_rate, "S": low_rate, "W": high_rate, "E": high_rate},
@@ -94,7 +97,6 @@ traffic_rates = {
         {"N": medium_rate, "S": low_rate, "W": medium_rate, "E": low_rate},
         {"N": low_rate, "S": low_rate, "W": medium_rate, "E": medium_rate},
     ],
-    "Sc7_No_front":    [{"N": high_rate, "S": high_rate, "W": 0, "E": high_rate}],
 }
 
 CSV_HEADER = [
@@ -105,23 +107,22 @@ CSV_HEADER = [
 def _get_env_class(version):
     if version == "heuristic_continous":
         from envs.alpha_env_v01 import AlphaEnv_v01
-        return AlphaEnv_v01
+        return AlphaEnv_v01, "alpha_env_v01_eval"
     elif version == "heuristic_discrete":
         from envs.alpha_env_v01_discrete import AlphaEnv_v01_Discrete
-        return AlphaEnv_v01_Discrete
+        return AlphaEnv_v01_Discrete, "alpha_env_v01_discrete_eval"
     elif version == "attention_continous":
         from envs.alpha_env_v01_attention_continous import AlphaEnv_v01_Attention
-        return AlphaEnv_v01_Attention
+        return AlphaEnv_v01_Attention, "alpha_env_v01_attention_eval"
     elif version == "attention_discrete":
         from envs.alpha_env_v01_attention_discrete import AlphaEnv_v01_AttentionDiscrete
-        return AlphaEnv_v01_AttentionDiscrete
+        return AlphaEnv_v01_AttentionDiscrete, "alpha_env_v01_attn_disc_eval"
     elif version == "heuristic_attention_continous":
         from envs.alpha_env_v01_heuristic_attention_continous import AlphaEnv_v01_HeuristicAttention
-        return AlphaEnv_v01_HeuristicAttention
+        return AlphaEnv_v01_HeuristicAttention, "alpha_env_v01_heur_attn_eval"
     elif version == "heuristic_attention_discrete":
         from envs.alpha_env_v01_heuristic_attention_discrete import AlphaEnv_v01_HeuristicAttentionDiscrete
-        return AlphaEnv_v01_HeuristicAttentionDiscrete
-
+        return AlphaEnv_v01_HeuristicAttentionDiscrete, "alpha_env_v01_heur_attn_disc_eval"
 
 def _build_inflows(traffic_rate):
     inf = InFlows()
@@ -131,10 +132,11 @@ def _build_inflows(traffic_rate):
             depart_lane=0, depart_speed=initial_speed, begin=1, color="green")
     inf.add(veh_type="NonRL", edge="E#D-X", probability=traffic_rate["S"]/3600,
             depart_lane=0, depart_speed=initial_speed, begin=1, color="green")
+    inf.add(veh_type="NonRL", edge="E#L-X", probability=traffic_rate["W"]/3600,
+            depart_lane=0, depart_speed=initial_speed, begin=1, color="green")
     inf.add(veh_type="RL", edge="E#L-X", probability=0.8,
             depart_lane=0, depart_speed=initial_speed, begin=warmup_steps, color="green")
     return inf
-
 
 def _kill_stray_sumo():
     """Kill any orphaned SUMO processes left over from a crashed run."""
@@ -156,22 +158,30 @@ def _open_fd_count():
 def main():
     version = args.version
     checkpoint_path = args.checkpoint
-    if not checkpoint_path.endswith('.zip'):
-        checkpoint_path += '.zip'
     n_sims = args.n_sims
 
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    EnvClass = _get_env_class(version)
+    EnvClass, env_name = _get_env_class(version)
 
-    # ── Build shared vehicle/sim/env params (never mutated per-run) ──────────
+    # Register attention model if needed
+    if "attention" in version:
+        sys.path.append(os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs"))
+        from models.attention_model import AttentionPolicyModel
+        ModelCatalog.register_custom_model("attention_policy", AttentionPolicyModel)
+
+    # Ray is initialised once for the whole script and shut down at the very end.
+    # We do NOT call ray.shutdown() between runs — that would be expensive and
+    # can leave orphaned processes. Instead we destroy only the algo + env objects.
+    ray.init(ignore_reinit_error=True)
+
     vehicles = VehicleParams()
     RL_cfp = SumoCarFollowingParams(speed_mode=0, accel=max_accel, decel=max_decel,
         sigma=sigma, tau=tau, min_gap=min_gap, max_speed=max_speed,
         speed_factor=speed_factor, speed_dev=speed_dev, impatience=0.0,
         car_follow_model="IDM")
-    NonRL_cfp = SumoCarFollowingParams(speed_mode=31, accel=max_accel, decel=max_decel,
+    NonRL_cfp = SumoCarFollowingParams(speed_mode=0, accel=max_accel, decel=max_decel,
         sigma=sigma, tau=tau, min_gap=min_gap, max_speed=max_speed,
         speed_factor=speed_factor, speed_dev=speed_dev, impatience=0.0,
         car_follow_model="IDM")
@@ -202,13 +212,7 @@ def main():
     print(f"\n--- EVALUATION START ---")
     print(f"Version: {version}")
     print(f"Checkpoint: {checkpoint_path}")
-    print(f"Sims per scenario: {n_sims}")
-    print(f"OS fd limit: {resource.getrlimit(resource.RLIMIT_NOFILE)}\n")
-
-    # ── Load model ONCE — avoids reopening the zip on every run ──────────────
-    print("Loading model from checkpoint (once)...")
-    base_model = PPO.load(checkpoint_path)
-    print("Model loaded.\n")
+    print(f"Sims per scenario: {n_sims}\n")
 
     for scen_key, scen_net_file in scenarios.items():
         for int_key, int_class in intentions.items():
@@ -234,50 +238,56 @@ def main():
                         veh=vehicles, initial=initial_config,
                     )
 
-                    def _make_env():
-                        p = flow_params
-                        _v = deepcopy(p["veh"])
-                        _n = p["net"]
-                        _s = deepcopy(p["sim"])
-                        _s.render = args.render
-                        net = p["network"](
-                            name="eval", vehicles=_v, net_params=_n,
+                    def _make_env(env_config, fp=flow_params, EC=EnvClass):
+                        p = fp
+                        _v = deepcopy(p["veh"]); _n = p["net"]; _s = deepcopy(p["sim"])
+                        _s.render = env_config.get("render", False)
+                        net = p["network"](name="eval", vehicles=_v, net_params=_n,
                             initial_config=p.get("initial", InitialConfig()),
-                            traffic_lights=p.get("tls", TrafficLightParams()),
-                        )
-                        return EnvClass(
-                            env_params=p["env"], sim_params=_s,
-                            network=net, simulator=p["simulator"],
-                        )
+                            traffic_lights=p.get("tls", TrafficLightParams()))
+                        return EC(env_params=p["env"], sim_params=_s, network=net, simulator=p["simulator"])
 
-                    # ── Run with guaranteed teardown ──────────────────────────
-                    env = None
-                    row = None
+                    register_env(env_name, _make_env)
+
+                    cfg = (PPOConfig()
+                        .environment(env=env_name, env_config={"render": args.render}, disable_env_checking=True)
+                        .framework("torch").
+                        rl_module(_enable_rl_module_api=False)
+                        .training(_enable_learner_api=False)
+                        .rollouts(num_rollout_workers=0)
+                        .resources(num_gpus=0))
+
+                    if "attention" in version:
+                        cfg = cfg.training( _enable_learner_api=False,  model={
+                            "custom_model": "attention_policy",
+                            "custom_model_config": {
+                                "ego_features": 4, "neighbor_features": 6,
+                                "max_neighbors": 8, "embed_dim": 64,
+                                "num_heads": 4, "mlp_hidden": 256}})
+
+                    # ── run with guaranteed teardown ──────────────────────────
+                    algo = None
+                    env  = None
+                    row  = None
                     try:
-                        env = DummyVecEnv([_make_env])
+                        algo = cfg.build()
+                        algo.restore(checkpoint_path)
+                        env = algo.workers.local_worker().env
 
-                        # Do NOT call set_env() — the model was trained with n_envs>1
-                        # and set_env() enforces a matching count. For inference we
-                        # only need the policy network; the env is driven manually below.
-
-                        obs = env.reset()
+                        obs, _ = env.reset()
                         done = False
-                        info = {}
-
+                        step_num = 0
                         while not done:
-                            action, _states = base_model.predict(obs, deterministic=True)
-                            obs, reward, dones, infos = env.step(action)
-                            done = dones[0]
-                            info = infos[0]
-
+                             action = algo.compute_single_action(obs, explore=False)
+                             obs, reward, terminated, truncated, info = env.step(action)
+                             done = terminated or truncated
+                             step_num += 1
+                            
                         telemetry = info.get("telemetry", {})
                         row = {
                             "run":          run_idx,
                             "collision":    1 if telemetry.get("agent_collision", False) else 0,
                             "success":      1 if telemetry.get("agent_success",   False) else 0,
-                            "avg_speed":    f"{telemetry.get('agent_avg_speed',    0.0):.4f}",
-                            "travel_time":  f"{telemetry.get('agent_travel_time',  0.0):.4f}",
-                            "waiting_time": f"{telemetry.get('agent_waiting_time', 0.0):.4f}",
                         }
 
                     except Exception as exc:
@@ -318,17 +328,17 @@ def main():
 
                 print(f"  [CSV] → {csv_path}")
 
-    print("\n--- EVALUATION COMPLETE ---")
 
-    try:
-        plot_eval_results(
-            output_dir=output_dir,
-            version_filter=version,
-            save_path=os.path.join(output_dir, f"heuristic_discrete.png"),
-            show=False,
-        )
-    except Exception as e:
-        print(f"Could not plot results automatically: {e}")
+                print(f"  [CSV] → {csv_path}")
+
+    print("\n--- EVALUATION COMPLETE ---")
+    plot_eval_results(
+    output_dir=output_dir,
+    version_filter=version,          # e.g. "heuristic_discrete"
+    save_path=os.path.join(output_dir, f"results_{version}.png"),
+    show=False,                       # set True if you have a display
+    )
+    ray.shutdown()
 
 
 if __name__ == "__main__":

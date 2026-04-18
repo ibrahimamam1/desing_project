@@ -86,7 +86,7 @@ class AttentionPolicyModel(TorchModelV2, nn.Module):
         mask_raw = obs[:, neighbor_end:]                    
 
         # Reshape neighbors: (B, max_neighbors, features)
-        neighbor_raw = neighbor_raw.view(-1, self.max_neighbors, self.neighbor_features)
+        neighbor_raw = neighbor_raw.reshape(-1, self.max_neighbors, self.neighbor_features)
 
         # --- 2. Encode ---
         ego_embed = self.ego_encoder(ego_raw)               

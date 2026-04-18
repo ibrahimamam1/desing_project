@@ -1,5 +1,3 @@
-#============NEW ACCEL ENV ENVIRONMENT BY IBRAHIMA============
-
 import gymnasium as gym
 from gymnasium.spaces import Box
 import numpy as np
@@ -21,32 +19,12 @@ class AlphaEnv_v01(Env_N):
         self.max_neighbours = 5
         self.perception_radius = 50
        
-        #### V1
         # Ego-centric observation: S_ego = [d_norm, v_norm, cos θ, sin θ]
         self.ego_obs_features = 4
-        # Per-neighbor (ego-relative): S_i = [dx, dy, v, cos Δθ, sin Δθ]
+        # Per-neighbor (ego-relative): S_i = [ego_d_to_cp, other_dist_to_cp, v, cos Δθ, sin Δθ]
         self.neighbour_obs_features = 5
-        
-        ### V2
-        # Ego-centric observation: S_ego = [d_norm, v_norm]
-        # self.ego_obs_features = 2
-        # Per-neighbor (ego-relative): S_i = [v, d, ttc]
-        # self.neighbour_obs_features = 3
+        self.routes = dict()
 
-        ### V3 
-        # Ego-centric observation: S_ego = [d_norm, v_norm, heading_norm]
-        #self.ego_obs_features = 3
-        # Per-neighbor (ego-relative): S_i = [v_norm, d_norm, heading_norm]
-        #self.neighbour_obs_features = 3
-        
-        ### V4 
-        # Ego-centric observation: S_ego = [d_norm, v_norm, sin , cos]
-        #self.ego_obs_features = 4
-        # Per-neighbor (ego-relative): S_i = [v_norm, d_norm, ttc, sin, cos]
-        #self.neighbour_obs_features = 5
-        
-
-        
         super().__init__(env_params, sim_params, network, simulator)
         
         # Initialize the static conflict map
@@ -69,8 +47,28 @@ class AlphaEnv_v01(Env_N):
         self.last_action = 0.0
         self.last_obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
         self.last_neighbors_info = []
+    
+    def _update_routes(self):
+        """
+        Updates the stored routes for all active vehicles.
+        Removes departed vehicles to prevent memory leaks.
+        """
+        current_ids = self.k.vehicle.get_ids()
+            
+        # 1. Add routes for new vehicles
+        for veh_id in current_ids:
+            if veh_id not in self.routes:
+                self.routes[veh_id] = self.k.vehicle.get_route(veh_id)
+                
+        # 2. Cleanup departed vehicles
+        active_ids_set = set(current_ids)
+        for veh_id in list(self.routes.keys()):
+            if veh_id not in active_ids_set:
+                del self.routes[veh_id]
 
     def get_state(self):
+        self._update_routes() 
+
         rl_ids = self.k.vehicle.get_rl_ids()
         if self.agent_id not in rl_ids:
             return self.last_obs
@@ -135,7 +133,7 @@ class AlphaEnv_v01(Env_N):
             other_speed = self.k.vehicle.get_speed(other_id)
             if other_speed is None or other_speed < 0:
                 other_speed = 0.0
-            other_speed_norm = np.clip(other_speed / max_speed, 0.0, 1.0)
+            other_speed = np.clip(other_speed / max_speed, 0.0, 1.0)
     
             # Neighbor heading
             other_heading = self.k.vehicle.get_heading(other_id)
@@ -143,48 +141,61 @@ class AlphaEnv_v01(Env_N):
             other_sin = np.sin(other_angle_rad)
             other_cos = np.cos(other_angle_rad)
     
-            # --- FRENET CONFLICT ---
-            conflict = self._get_frenet_conflict(ego_id, other_id)
-    
-            if conflict is not None:
-                ego_dist_to_cp, other_dist_to_cp = conflict
-    
-                # s: signed lead/lag — positive means ego arrives first (safe)
-                #    negative means neighbor arrives first (ego must yield)
-                s_raw = ego_dist_to_cp - other_dist_to_cp
-                s = np.clip(s_raw / self.perception_radius, -1.0, 1.0)
-    
-                # TTC: ego's remaining distance to conflict point / ego speed
-                ego_eta   = ego_dist_to_cp / (ego_speed + 1e-6)
-                other_eta = other_dist_to_cp / (other_speed + 1e-6)
-                raw_ttc   = abs(ego_eta - other_eta)
-                ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0)
-            else:
-                # Truly non-conflicting routes (e.g. same-direction following)
-                # Fall back to longitudinal gap along ego's heading
-                longitudinal_proj = (other_x - ego_x) * ego_cos + (other_y - ego_y) * ego_sin
-                s_raw = np.sign(longitudinal_proj) * abs(longitudinal_proj)
-                s = np.clip(s_raw / self.perception_radius, -1.0, 1.0)
-                if longitudinal_proj > 0:
-                    # Neighbor is AHEAD — ego may run into them
-                    closing_speed = ego_speed - other_speed
-                else:
-                    # Neighbor is BEHIND — they may catch up to ego
-                    closing_speed = other_speed - ego_speed
+            # --- Compute conflict point ---
+            vx_ego, vy_ego = ego_cos, ego_sin
+            vx_other, vy_other = other_cos, other_sin
 
-                if closing_speed <= 0:
-                    raw_ttc = 10.0  # not closing, no threat
-                else:
-                    raw_ttc = distance / closing_speed 
-                ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0)    
+            det = (-ego_cos * other_sin) + (ego_sin * other_cos)
+
+            if abs(det) < 0.05:
+                # If parallel, ego is following other on same lane
+                dx = other_x - ego_x
+                dy = other_y - ego_y
+                
+                # Dot product gives the projection (longitudinal distance)
+                # t1 is how far ego must travel to reach 'other'
+                t1 = dx * vx_ego + dy * vy_ego
+                
+                # In a following scenario, the lead vehicle is already "at" the conflict
+                # relative to its own path start, so we set its distance to 0.
+                other_dist_to_cp = 0.0
+                
+                # Apply a 5.0m buffer for the lead vehicle's physical length
+                ego_dist_to_cp = max(0, t1)
+            else:  # Intersecting Case
+                dx = other_x - ego_x
+                dy = other_y - ego_y
+                
+                t1 = (dx * (-vy_other) - dy * (-vx_other)) / det
+                t2 = (dx * vy_ego - dy * vx_ego) / det
+            
+                # Lane width buffer (1.5m offset from center of 3m lane)
+                ego_dist_to_cp = max(0, t1)
+                other_dist_to_cp = max(0, t2)
+            
+             # Normalise dist_to_cp
+            ego_dist_to_cp = 1.0 - np.exp(-ego_dist_to_cp / 10)
             edge = self.k.vehicle.get_edge(other_id)
-    
+            
+            rel_speed = ego_speed - other_speed 
+
+            # 2. TTC (Time to Collision) 
+            ttc = ego_dist_to_cp / max(rel_speed, 1e-3) if rel_speed > 0 else np.inf
+            ttc_norm = ttc_norm = 1.0 - np.exp(-ttc / 3.0)  # Normalize to a 10s horizon
+            
+            # 3. Delta ETA (Difference in arrival times at Conflict Point)
+            ego_eta = ego_dist_to_cp / max(ego_speed, 0.5)
+            other_eta = other_dist_to_cp / max(other_speed, 0.5)
+            delta_eta = ego_eta - other_eta
+            delta_eta_norm =  np.tanh(delta_eta / 2.0)
+
             neighbors_info.append({
-                'v':        other_speed_norm,
-                's':        s,
-                'ttc':      ttc,
-                'sinx':     other_sin,
-                'cosx':     other_cos,
+                'ego_dist_to_cp':        ego_dist_to_cp,
+                'v':        other_speed,
+                'ttc':        ttc_norm,
+                'd_eta':        delta_eta_norm,
+                'sin':     other_sin,
+                'cos':     other_cos,
                 'edge':     edge,
                 'distance': distance,
             })
@@ -195,205 +206,69 @@ class AlphaEnv_v01(Env_N):
     
         for neighbor in neighbors_info:
             obs_vector.extend([
+                neighbor['ego_dist_to_cp'],
                 neighbor['v'],
-                neighbor['s'],
-                neighbor['ttc'],
-                neighbor['sinx'],
-                neighbor['cosx'],
+                neighbor['d_eta'],
+                neighbor['sin'],
+                neighbor['cos'],
             ])
     
-        # Pad missing neighbors: [v=0, s=1(safe), ttc=1(safe), sin=0, cos=0]
+        # Pad missing neighbors: [ego_dist_to_cp=1(safe), other_dist_to_cp=1(safe), sin=0, cos=0]
         num_actual = len(neighbors_info)
         if num_actual < self.max_neighbours:
             for _ in range(self.max_neighbours - num_actual):
-                obs_vector.extend([0.0, 1.0, 1.0, 0.0, 0.0])
+                obs_vector.extend([1.0, 0.0, 1.0, 0.0, 0.0])
     
         obs_array = np.array(obs_vector, dtype=np.float32)
         assert np.all(np.isfinite(obs_array)), f"Non-finite obs: {obs_array}"
     
         return obs_array, neighbors_info
 
-    def _get_route_waypoints(self, route):
-        """
-        Build a flat list of (x, y, cumulative_s) waypoints for a route.
-        Uses SUMO's laneShape for the first lane of each edge.
-        """
-        waypoints = []
-        s = 0.0
-        for edge_id in route:
-            try:
-                # get shape of lane 0 of this edge
-                shape = self.k.kernel_api.lane.getShape(edge_id + "_0")
-            except Exception:
-                print('get_route_waypoint: Failed to get waypoint')
-                continue
-            for i, (x, y) in enumerate(shape):
-                if i == 0 and len(waypoints) > 0:
-                    # skip duplicate junction point
-                    pass
-                else:
-                    waypoints.append((x, y, s))
-                if i < len(shape) - 1:
-                    nx, ny = shape[i + 1]
-                    s += np.sqrt((nx - x)**2 + (ny - y)**2)
-        return waypoints  # list of (x, y, cumulative_s_from_route_start)
-
-
-    def _segments_intersect(self, p1, p2, p3, p4):
-        """
-        Find intersection of segment p1->p2 and segment p3->p4.
-        Returns (t, u) parameters (both in [0,1]) or None.
-        t: fraction along p1->p2, u: fraction along p3->p4.
-        """
-        x1, y1 = p1; x2, y2 = p2
-        x3, y3 = p3; x4, y4 = p4
-        denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-        if abs(denom) < 1e-9:
-            return None  # parallel
-        t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
-        u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom
-        if 0.0 <= t <= 1.0 and 0.0 <= u <= 1.0:
-            return t, u
-        return None
-    
-    def _get_frenet_conflict(self, ego_id, other_id):
-        """
-        Find the conflict point between ego and neighbor using route polylines.
-        Returns (ego_s_to_cp, other_s_to_cp) where s is arc-length remaining
-        to the conflict point, or None if routes don't intersect.
-        """
-        ego_route   = self.k.vehicle.get_route(ego_id)
-        other_route = self.k.vehicle.get_route(other_id)
-    
-        ego_wp   = self._get_route_waypoints(ego_route)
-        other_wp = self._get_route_waypoints(other_route)
-    
-        if len(ego_wp) < 2 or len(other_wp) < 2:
-            return None
-    
-        # Current odometer readings
-        ego_s_traveled   = self.k.vehicle.get_distance(ego_id)
-        other_s_traveled = self.k.vehicle.get_distance(other_id)
-        if ego_s_traveled == -1001: ego_s_traveled = 0.0
-        if other_s_traveled == -1001: other_s_traveled = 0.0
-    
-        # Search all segment pairs for first intersection
-        best = None  # (ego_s_at_cp, other_s_at_cp)
-    
-        for i in range(len(ego_wp) - 1):
-            ex1, ey1, es1 = ego_wp[i]
-            ex2, ey2, es2 = ego_wp[i + 1]
-            seg_len_e = es2 - es1
-    
-            for j in range(len(other_wp) - 1):
-                ox1, oy1, os1 = other_wp[j]
-                ox2, oy2, os2 = other_wp[j + 1]
-                seg_len_o = os2 - os1
-    
-                result = self._segments_intersect(
-                    (ex1, ey1), (ex2, ey2),
-                    (ox1, oy1), (ox2, oy2)
-                )
-                if result is not None:
-                    t, u = result
-                    ego_s_at_cp   = es1 + t * seg_len_e  # s from route start
-                    other_s_at_cp = os1 + u * seg_len_o
-    
-                    # Only care about conflict points ahead of both vehicles
-                    if ego_s_at_cp >= ego_s_traveled and other_s_at_cp >= other_s_traveled:
-                        ego_remaining   = ego_s_at_cp   - ego_s_traveled
-                        other_remaining = other_s_at_cp - other_s_traveled
-                        # keep the earliest conflict point for ego
-                        if best is None or ego_remaining < best[0]:
-                            best = (ego_remaining, other_remaining)
-    
-        return best  # (ego_dist_to_cp, other_dist_to_cp) or None
-
-    def _get_distances_to_collision_point(self, x1, y1, theta1, x2, y2, theta2):
-        """
-        Calculates the distance from (x1, y1) to the collision point and 
-        (x2, y2) to the collision point.
-        theta1, theta2 are in standard radians (counter-clockwise from East).
-        
-        Returns:
-            t (float): Distance for vehicle 1 to collision.
-            u (float): Distance for vehicle 2 to collision.
-            Returns (None, None) if lines are parallel.
-        """
-        # Direction vectors
-        dx1 = np.cos(theta1)
-        dy1 = np.sin(theta1)
-        dx2 = np.cos(theta2)
-        dy2 = np.sin(theta2)
-
-        # Determinant (cross product of direction vectors)
-        # det = dx1 * dy2 - dx2 * dy1
-        # This is equivalent to sin(theta2 - theta1)
-        det = dx1 * dy2 - dy1 * dx2
-
-        # Check for parallel lines (det close to 0)
-        if abs(det) < 1e-6:
-            return None, None
-
-        # Delta position
-        dx_delta = x2 - x1
-        dy_delta = y2 - y1
-
-        # Cramers rule / Cross product solution for t and u
-        # t = (Delta x Dir2) / det
-        t = (dx_delta * dy2 - dy_delta * dx2) / det
-        
-        # u = (Delta x Dir1) / det
-        u = (dx_delta * dy1 - dy_delta * dx1) / det
-
-        return t, u
-    
     def _is_conflicting(self, veh1, veh2):
         """
         Determines if two vehicles have a conflicting path.
         Returns True if:
-        1. They are currently on the same edge.
+        1. They are currently on the same edge AND the other vehicle is AHEAD of ego.
         2. Their routes (source to destination) share any common edges (e.g. merging or shared goal).
+        Vehicles on the same edge but BEHIND the ego are NOT considered conflicting.
         """
-
         edge1 = self.k.vehicle.get_edge(veh1)
         edge2 = self.k.vehicle.get_edge(veh2)
-
+    
         # --- Condition A: Currently on the same edge ---
         if edge1 == edge2:
-            return True
+            # Get lane positions (distance from start of edge)
+            pos1 = self.k.vehicle.get_position(veh1)
+            pos2 = self.k.vehicle.get_position(veh2)
+    
+            # If either position is invalid (-1001), treat as conflict to be safe
+            if pos1 == -1001 or pos2 == -1001:
+                return True
+    
+            # Conflict only if other vehicle is AHEAD (pos2 > pos1)
+            # If behind (pos2 < pos1), no conflict
+            return pos2 > pos1
         
-        # Vehicles that are not on the same lane and either already crossed cannot be conflicting
-        if edge1.startswith('E#X') or edge2.startswith('E#X'):
-            return False  
-
-        # 2. JUNCTION FIX: If either vehicle is inside the junction (internal SUMO edge), 
-        # consider them conflicting. Your geometric projection will filter out the safe ones.
-        if edge1.startswith(':') or edge2.startswith(':'):
-            return True 
-         
-        # 3. Get Routes
-        # Note: get_route returns a tuple/list of edges from current position to destination
-        route1 = self.k.vehicle.get_route(veh1)
-        route2 = self.k.vehicle.get_route(veh2)
-
-        # If routes are unavailable for some reason, assume no conflict to avoid errors
+        # After crossing only same edge vehicles are conflicting
+        if edge1.startswith("E#X"):
+            return False 
+        
+        # --- Condition C: Route-based conflict (merging/shared destination) ---
+        route1 = self.routes[veh1]
+        route2 = self.routes[veh2]
+    
         if not route1 or not route2:
             return False
+    
+        if edge2.startswith("E#X") and edge2 not in route1:
+            return False 
 
-        # Extract (Source, Destination) tuple for both vehicles
-        # route[0] is source edge, route[-1] is destination edge
+
         pattern_1 = (route1[0], route1[-1])
         pattern_2 = (route2[0], route2[-1])
-
-        # Retrieve the list of patterns that conflict with Vehicle 1
-        # defaults to empty list if pattern is not in map
+    
         conflicting_patterns = self.conflict_map.get(pattern_1, [])
-
-        if pattern_2 in conflicting_patterns:
-            return True
-
-        return False
+        return pattern_2 in conflicting_patterns
 
     def _apply_rl_actions(self, rl_action):
         max_accel = self.env_params.additional_params['max_accel']
@@ -477,7 +352,7 @@ class AlphaEnv_v01(Env_N):
         mapping[NS] = [WE, EW, SW, WN, ES] 
         mapping[SN] = [WE, EW, NE, WN, ES]
         mapping[EW] = [NS, SN, WN, NE, SW]
-        mapping[WE] = [NS, SN, ES, NE, SW]
+        mapping[WE] = [NS, NE, ES, SN, SW, SE]
 
         # 3. Left Turn Conflicts
         # A left turn conflicts with:
@@ -488,7 +363,7 @@ class AlphaEnv_v01(Env_N):
         # Note: Opposing lefts (e.g., NE and SW) usually pass each other safely.
         mapping[NE] = [SN, WE, EW, WN, ES, SE] 
         mapping[SW] = [NS, WE, EW, WN, ES, NW]
-        mapping[WN] = [EW, NS, SN, NE, SW, WS]
+        mapping[WN] = [EW, EN, SN, SW, NS, NE]
         mapping[ES] = [WE, NS, SN, NE, SW, EN]
 
         # 4. Right Turn Conflicts

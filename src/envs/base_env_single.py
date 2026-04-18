@@ -339,6 +339,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         super().reset(seed=seed)
         
         self.last_action = 0.0
+        self.last_potential = 0.0
         self.last_neighbors_info = []
         # Ensure observation space is respected (Box vs Discrete check might be needed depending on subclass)
         if hasattr(self.observation_space, 'shape'):

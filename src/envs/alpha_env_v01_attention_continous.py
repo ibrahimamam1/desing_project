@@ -18,34 +18,13 @@ class AlphaEnv_v01_Attention(Env_N):
     def __init__(self, env_params, sim_params, network, simulator='traci'):
         self.prev_pos = dict()
         self.absolute_position = dict()
-        self.max_neighbours = 5
-        self.perception_radius = 50
+        self.max_neighbours = 8
+        self.perception_radius = 80
        
-        #### V1
         # Ego-centric observation: S_ego = [d_norm, v_norm, cos θ, sin θ]
         self.ego_obs_features = 4
-        # Per-neighbor (ego-relative): S_i = [dx, dy, v, cos Δθ, sin Δθ]
+        # Per-neighbor (ego-relative): S_i = [dist_to_cp, v, delta_eta, cos Δθ, sin Δθ]
         self.neighbour_obs_features = 5
-        
-        ### V2
-        # Ego-centric observation: S_ego = [d_norm, v_norm]
-        # self.ego_obs_features = 2
-        # Per-neighbor (ego-relative): S_i = [v, d, ttc]
-        # self.neighbour_obs_features = 3
-
-        ### V3 
-        # Ego-centric observation: S_ego = [d_norm, v_norm, heading_norm]
-        #self.ego_obs_features = 3
-        # Per-neighbor (ego-relative): S_i = [v_norm, d_norm, heading_norm]
-        #self.neighbour_obs_features = 3
-        
-        ### V4 
-        # Ego-centric observation: S_ego = [d_norm, v_norm, sin , cos]
-        #self.ego_obs_features = 4
-        # Per-neighbor (ego-relative): S_i = [v_norm, d_norm, ttc, sin, cos]
-        #self.neighbour_obs_features = 5
-        
-
         
         super().__init__(env_params, sim_params, network, simulator)
         
@@ -65,25 +44,15 @@ class AlphaEnv_v01_Attention(Env_N):
 
         self.last_action = 0.0
         self.last_obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
-
+    
     def get_state(self):
-        """
-        Return the observation for the single RL agent.
-        Returns a flat np.array matching self.observation_space.
-        """
         rl_ids = self.k.vehicle.get_rl_ids()
-        
-        # If the vehicle despawned (reached goal or crashed), return the 
-        # last valid observation to prevent value function spikes.
-        if not self.agent_id in rl_ids:
+        if self.agent_id not in rl_ids:
             return self.last_obs
-
-        # Get current observation
-        obs = self._get_local_observation(self.agent_id)
-        
-        # Cache the valid observation for the terminal step
+     
+        obs, neighbors_info = self._get_local_observation(self.agent_id)
         self.last_obs = obs
-        
+        self.last_neighbors_info = neighbors_info  # cache for terminal step
         return obs
 
     def _get_local_observation(self, ego_id):
@@ -99,11 +68,11 @@ class AlphaEnv_v01_Attention(Env_N):
             ego_dis = 0.0 
 
         dis_to_goal = total_route_length - ego_dis
-        dis_to_goal_norm = np.clip(dis_to_goal / total_route_length, -1.0, 1.0)        # Ego Speed (normalized, clipped)
+        dis_to_goal = np.clip(dis_to_goal / total_route_length, 0, 1.0)        # Ego Speed (normalized, clipped)
         
         ego_speed = self.k.vehicle.get_speed(ego_id)
         max_speed = self.k.network.max_speed()
-        ego_speed_norm = np.clip(ego_speed / max_speed, -1.0, 1.0)
+        ego_speed = np.clip(ego_speed / max_speed, 0, 1.0)
         
         # Ego heading (Convert SUMO North=0, CW to Math East=0, CCW)
         ego_heading = self.k.vehicle.get_heading(ego_id)
@@ -112,7 +81,7 @@ class AlphaEnv_v01_Attention(Env_N):
         ego_sin = np.sin(ego_angle_rad)
         
         # Add heading to the ego observation vector (Now 4 features)
-        obs_vector = [dis_to_goal_norm, ego_speed_norm, ego_sin, ego_cos]
+        obs_vector = [dis_to_goal, ego_speed, ego_sin, ego_cos]
         
         # --- 2. Neighbor States (ego-centric relative frame) ---
         neighbors_info = []
@@ -141,7 +110,7 @@ class AlphaEnv_v01_Attention(Env_N):
                 
                 # Neighbor speed (normalized)
                 other_speed = self.k.vehicle.get_speed(other_id)
-                other_speed_norm = np.clip(other_speed / max_speed, 0.0, 1.0)
+                other_speed = np.clip(other_speed / max_speed, 0.0, 1.0)
                 
                 # Neighbor heading to Math angle
                 other_heading = self.k.vehicle.get_heading(other_id)
@@ -149,47 +118,60 @@ class AlphaEnv_v01_Attention(Env_N):
                 other_sin = np.sin(other_angle_rad)
                 other_cos = np.cos(other_angle_rad)
                 
-                # --- GEOMETRIC PROJECTION ---
-                t, u = self._get_distances_to_collision_point(
-                    ego_x, ego_y, ego_angle_rad,
-                    other_x, other_y, other_angle_rad
-                )
+                # --- Compute conflict point ---
+                vx_ego, vy_ego = ego_cos, ego_sin
+                vx_other, vy_other = other_cos, other_sin
+
+                det = (-ego_cos * other_sin) + (ego_sin * other_cos)
+
+                if abs(det) < 0.05:
+                    # If parallel, ego is following other on same lane
+                    dx = other_x - ego_x
+                    dy = other_y - ego_y
                 
-                # INTERSECTING PATHS
-                if t is not None:
-                    if t > -2.0 and u > -2.0:
-                        d_raw = t - u
-                        d = np.clip(d_raw / self.perception_radius, -1.0, 1.0)
-                        
-                        # Calculate TTC based on Ego's distance to the conflict point (t)
-                        # We clip to 10 seconds max to normalize it properly.
-                        raw_ttc = max(0.0, t) / (ego_speed + 1e-6)
-                        ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0) 
-                    else:
-                        d = 1.0  # Safe
-                        ttc = 1.0 # Safe
+                    # Dot product gives the projection (longitudinal distance)
+                    # t1 is how far ego must travel to reach 'other'
+                    t1 = dx * vx_ego + dy * vy_ego
+                
+                    # In a following scenario, the lead vehicle is already "at" the conflict
+                    # relative to its own path start, so we set its distance to 0.
+                    other_dist_to_cp = 0.0
+                
+                    # Apply a 5.0m buffer for the lead vehicle's physical length
+                    ego_dist_to_cp = max(0, t1)
+                    ego_dist_to_cp = np.clip(ego_dist_to_cp/self.perception_radius, 0, 1)
+                else:  # Intersecting Case
+                    dx = other_x - ego_x
+                    dy = other_y - ego_y
+                
+                    t1 = (dx * (-vy_other) - dy * (-vx_other)) / det
+                    t2 = (dx * vy_ego - dy * vx_ego) / det
+            
+                    # Lane width buffer (1.5m offset from center of 3m lane)
+                    ego_dist_to_cp = max(0, t1)
+                    other_dist_to_cp = max(0, t2)
+            
+                    # Normalise dist_to_cp
+                    ego_dist_to_cp = np.clip(ego_dist_to_cp/self.perception_radius, 0, 1)
+                    other_dist_to_cp = np.clip(other_dist_to_cp/self.perception_radius, 0, 1)
+                    edge = self.k.vehicle.get_edge(other_id)
+            
+                rel_speed = ego_speed - other_speed 
 
-                # PARALLEL PATHS (Leading / Following)
-                else:
-                    longitudinal_proj = dx_world * ego_cos + dy_world * ego_sin
-                    sign = np.sign(longitudinal_proj)
-                    d_raw = sign * abs(longitudinal_proj)
-                    d = np.clip(d_raw / self.perception_radius, -1.0, 1.0)
-                    
-                    # TTC based on distance to the car directly ahead/behind
-                    raw_ttc = abs(longitudinal_proj) / (ego_speed + 1e-6)
-                    ttc = np.clip(raw_ttc / 10.0, 0.0, 1.0)
+            
+                # 3. Delta ETA (Difference in arrival times at Conflict Point)
+                ego_eta = ego_dist_to_cp / max(ego_speed, 0.5)
+                other_eta = other_dist_to_cp / max(other_speed, 0.5)
+                delta_eta = ego_eta - other_eta
+                delta_eta_norm =  np.tanh(delta_eta / 2.0)
 
-                # Append the 5 features
                 neighbors_info.append({
-                    'v': other_speed_norm,
-                    'dx': dx_world/self.perception_radius,
-                    'dy': dy_world/self.perception_radius,
-                    'ttc': ttc,
-                    'd': d,
-                    'sinx': other_sin,
-                    'cosx': other_cos,
-                    'edge': edge,
+                    'ego_dist_to_cp':        ego_dist_to_cp,
+                    'v':        other_speed,
+                    'delta_eta':        delta_eta_norm,
+                    'sin':     other_sin,
+                    'cos':     other_cos,
+                    'edge':     edge,
                     'distance': distance,
                 })
 
@@ -197,23 +179,21 @@ class AlphaEnv_v01_Attention(Env_N):
         neighbors_info.sort(key=lambda n: n['distance'])
         neighbors_info = neighbors_info[:self.max_neighbours]
         
-        print("=========NEIGHBOUR INFO==============") 
         for neighbor in neighbors_info:
-            print(f'edge={neighbor["edge"]}, dist={neighbor["distance"]:.2f}, dx={neighbor["dx"]:.2f}, dy={neighbor["dy"]:.2f}, ttc={neighbor["ttc"]:.2f}, STC={neighbor["d"]:.2f}')
             obs_vector.extend([
+                neighbor['ego_dist_to_cp'],
                 neighbor['v'],
-                neighbor['d'],
-                neighbor['ttc'],
-                neighbor['sinx'],
-                neighbor['cosx']
+                neighbor['delta_eta'],
+                neighbor['sin'],
+                neighbor['cos'],
             ])
         
-        # Pad if fewer than max_neighbours: [v=0, d=1(safe), ttc=1(safe), sin=0, cos=0]
+        # Pad if fewer than max_neighbours: [ego_d_to_cp=1(safe), v=0, ttc=1(safe), delta_eta=1(safe), sin=0, cos=0]
         num_actual = len(neighbors_info)
         if num_actual < self.max_neighbours:
             missing_count = self.max_neighbours - num_actual
             for _ in range(missing_count):
-                obs_vector.extend([0.0, 1.0, 1.0, 0.0, 0.0])
+                obs_vector.extend([1.0, 0.0, 1.0, 0.0, 0.0])
         
         # Append neighbor mask: 1.0 = real neighbor, 0.0 = padded
         neighbor_mask = [1.0] * num_actual + [0.0] * (self.max_neighbours - num_actual)
@@ -222,52 +202,7 @@ class AlphaEnv_v01_Attention(Env_N):
 
         # --- THE FAILSAFE ---
         obs_array = np.array(obs_vector, dtype=np.float32)
-        
-        if np.isnan(obs_array).any() or np.isinf(obs_array).any():
-            print(f"WARNING: NaN/Inf generated in observation for {ego_id}! Sanitizing array.")
-            # Convert NaNs to 0.0, +Inf to 1.0, -Inf to -1.0
-            obs_array = np.nan_to_num(obs_array, nan=0.0, posinf=1.0, neginf=-1.0)
-            
-        return obs_array 
-
-    def _get_distances_to_collision_point(self, x1, y1, theta1, x2, y2, theta2):
-        """
-        Calculates the distance from (x1, y1) to the collision point and 
-        (x2, y2) to the collision point.
-        theta1, theta2 are in standard radians (counter-clockwise from East).
-        
-        Returns:
-            t (float): Distance for vehicle 1 to collision.
-            u (float): Distance for vehicle 2 to collision.
-            Returns (None, None) if lines are parallel.
-        """
-        # Direction vectors
-        dx1 = np.cos(theta1)
-        dy1 = np.sin(theta1)
-        dx2 = np.cos(theta2)
-        dy2 = np.sin(theta2)
-
-        # Determinant (cross product of direction vectors)
-        # det = dx1 * dy2 - dx2 * dy1
-        # This is equivalent to sin(theta2 - theta1)
-        det = dx1 * dy2 - dy1 * dx2
-
-        # Check for parallel lines (det close to 0)
-        if abs(det) < 1e-6:
-            return None, None
-
-        # Delta position
-        dx_delta = x2 - x1
-        dy_delta = y2 - y1
-
-        # Cramers rule / Cross product solution for t and u
-        # t = (Delta x Dir2) / det
-        t = (dx_delta * dy2 - dy_delta * dx2) / det
-        
-        # u = (Delta x Dir1) / det
-        u = (dx_delta * dy1 - dy_delta * dx1) / det
-
-        return t, u
+        return obs_array, neighbors_info 
 
     def _apply_rl_actions(self, rl_action):
         max_accel = self.env_params.additional_params['max_accel']
