@@ -46,20 +46,17 @@ class AlphaEnv_v01_AttentionDiscrete(AlphaEnv_v01_Attention):
         self.k.vehicle.apply_acceleration(rl_ids, [real_action])
 
 
-    def compute_reward(self, agent_id, fail, goal_reached, current_action=None, obs_info=None):
-        # 1. Terminal conditions (Normalized to larger, but bounded values)
-        # Assuming your dense step rewards will be roughly in the [-1, 1] range.
-        if fail:
-            return -1.0  
-        if goal_reached:
-            return 1.0   
-            
+   def compute_reward(self, agent_id, fail, goal_reached, current_action=None):
         if agent_id not in self.k.vehicle.get_ids():
             return 0.0
-
-        # --- POTENTIAL FUNCTION CALCULATION ---
         
-        # A. Progress Potential (0.0 at start, 1.0 at goal)
+        # 1. Sparse Terminal Rewards
+        if fail:           return -10.0
+        if goal_reached:   return 15.0
+        
+        obs_info = getattr(self, 'last_neighbors_info', []) 
+        
+        # 2. Progress Reward
         ego_dis = self.k.vehicle.get_distance(agent_id)
         if ego_dis == -1001: ego_dis = 0.0
         route = self.k.vehicle.get_route(agent_id)
@@ -67,28 +64,24 @@ class AlphaEnv_v01_AttentionDiscrete(AlphaEnv_v01_Attention):
         
         progress_norm = np.clip(ego_dis / total_route_length, 0.0, 1.0)
         
-        # B. Safety Potential (1.0 is perfectly safe, 0.0 is imminent crash)
-        # We extract this directly from the `neighbors_info` list you generated in _get_local_observation
-        min_delta_eta_norm = 1.0
+        if not hasattr(self, 'last_progress'):
+            self.last_progress = progress_norm
+            
+        progress_delta = progress_norm - self.last_progress 
+        self.last_progress = progress_norm
         
-        if obs_info and len(obs_info) > 0:
-            # For crossing conflicts, we want delta_eta away from 0. 
-            # abs(delta_eta_norm) close to 0 is dangerous. 
-            min_delta_eta_norm = min([abs(n['d_eta']) for n in obs_info])
+        # 3. Safety Penalty
+        safety_penalty = 0.0
+        for n in obs_info: 
+            abs_d_eta = abs(n['d_eta'])
+            # Only penalize if they are projected to arrive within a tight window of each other
+            if abs_d_eta < 0.2: 
+                # Exponential penalty: spikes hard as d_eta approaches 0
+                safety_penalty += -np.exp(-abs_d_eta * 10.0) 
 
-        # Combine into total state potential
-        # Weights: 0.4 for progress, 0.6 for safety (prioritize not crashing)
-        current_potential = (0.4 * progress_norm) + (0.6 * min_delta_eta_norm)
-        
-        # --- PBRS STEP REWARD ---
-        gamma = 0.98 # Make sure this matches your RL algorithm's gamma
-        reward_pbrs = (gamma * current_potential) - self.last_potential
-        self.last_potential = current_potential
-
-        # 3. Accumulate in telemetry
-        self.telemetry["reward_pbrs_total"] += reward_pbrs
-        
-        # We don't strictly need a time penalty anymore, as the progress potential 
-        # naturally encourages reaching the goal to maximize the discounted potential.
-        
-        return reward_pbrs
+        # 4. Dense Reward Assembly
+        return (
+            10.0 * progress_delta     # reward for moving towards goal 
+            + 1.0 * safety_penalty     # Penalty for crossing intersection unsafely
+            - 0.01                     # Time penalty
+        )

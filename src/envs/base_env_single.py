@@ -11,11 +11,12 @@ from flow.utils.flow_warnings import deprecated_attribute
 from gymnasium.spaces import Box
 from traci.exceptions import FatalTraCIError
 from traci.exceptions import TraCIException
-
+from shapely.geometry import LineString, Point
 import sumolib
 from flow.core.util import ensure_dir
 from flow.core.kernel import Kernel
 from flow.utils.exceptions import FatalFlowError
+from shapely.geometry import LineString, Point
 
 # ANSI color codes for debugging
 BLUE = '\033[94m'
@@ -93,7 +94,21 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         self.k.junction.master_kernel = self.k
 
         self.setup_initial_state()
-
+        
+        self.internal_connections = {
+            ('E#D-X', 'E#X-R'): ':X_6',
+            ('E#D-X', 'E#X-T'): ':X_7',
+            ('E#D-X', 'E#X-L'): ':X_8',
+            ('E#L-X', 'E#X-D'): ':X_9',
+            ('E#L-X', 'E#X-R'): ':X_10',
+            ('E#L-X', 'E#X-T'): ':X_11',
+            ('E#R-X', 'E#X-T'): ':X_3',
+            ('E#R-X', 'E#X-L'): ':X_4',
+            ('E#R-X', 'E#X-D'): ':X_5',
+            ('E#T-X', 'E#X-L'): ':X_0',
+            ('E#T-X', 'E#X-D'): ':X_1',
+            ('E#T-X', 'E#X-R'): ':X_2',
+        }
         # Renderer Setup
         if self.sim_params.render in ['gray', 'dgray', 'rgb', 'drgb']:
             save_render = self.sim_params.save_render
@@ -339,7 +354,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         super().reset(seed=seed)
         
         self.last_action = 0.0
-        self.last_potential = 0.0
+        self.last_progress = 0.0
         self.last_neighbors_info = []
         # Ensure observation space is respected (Box vs Discrete check might be needed depending on subclass)
         if hasattr(self.observation_space, 'shape'):
@@ -414,6 +429,60 @@ class Env_N(gym.Env, metaclass=ABCMeta):
             
         obs = self.get_state()
         return obs, {}
+    
+
+    def _get_vehicle_polyline(self, veh_id):
+        """
+        Builds a continuous Shapely LineString of the vehicle's future path, 
+        stitching the gap across the junction using known internal connections.
+        """
+        current_edge = self.k.vehicle.get_edge(veh_id)
+        route = self.k.vehicle.get_route(veh_id)
+        pos = self.k.vehicle.get_position(veh_id)
+     
+        # 1. Start with the current edge's shape
+        # Note: If Flow complains about missing shapes, you may need to append '_0' 
+        # to target the specific lane, e.g., self.k.network.get_edge_shape(f"{current_edge}_0")
+        coords = list(self.k.kernel_api.lane.getShape(current_edge + "_0"))
+     
+        # 2. Check if we need to stitch the intersection gap
+        if not current_edge.startswith(':'):
+            try:
+                current_idx = route.index(current_edge)
+                if current_idx + 1 < len(route):
+                    next_edge = route[current_idx + 1]
+                    
+                    # 3. Lookup the internal edge from our dictionary
+                    internal_edge = self.internal_connections.get((current_edge, next_edge))
+                    
+                    if internal_edge:
+                        # Fetch internal junction shape. Append '_0' to target the lane 
+                        # if Flow's wrapper requires lane IDs instead of edge IDs.
+                        internal_lane = f"{internal_edge}_0" 
+                        coords.extend(self.k.kernel_api.lane.getShape(internal_lane))
+                    
+                    # 4. Add the next macro edge's shape
+                    coords.extend(self.k.kernel_api.lane.getShape(next_edge + "_0"))
+            except ValueError:
+                pass # Vehicle is likely at the very end of its route
+                
+        # Handle the case where the vehicle is already inside the intersection (on an internal edge)
+        elif current_edge.startswith(':'):
+            try:
+                # If inside the intersection, route[0] is usually the target outgoing edge
+                next_edge = route[0] if route else None
+                if next_edge:
+                    coords.extend(self.k.kernel_api.lane.getShape(next_edge + "_0"))
+            except IndexError:
+                pass
+    
+        # Fallback to avoid Shapely crashing on single-coordinate lines
+        if len(coords) < 2:
+            x, y = self.k.vehicle.get_2d_position(veh_id)
+            # Create a tiny arbitrary line indicating a stopped/lost vehicle
+            return LineString([(x, y), (x+0.1, y+0.1)]), pos
+            
+        return LineString(coords), pos 
 
     @property
     def sorted_ids(self):

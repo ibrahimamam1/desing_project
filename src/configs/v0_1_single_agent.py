@@ -99,9 +99,9 @@ vehicles.add(
 )
 
 ############################# InFlow Configuration #########################
-high = 500
-medium = 350
-low = 200
+high = 450
+medium = 250
+low = 150
 traffic_rate = {"N": high, "S": high, "W": medium, "E": high}
 
 inflow = InFlows()
@@ -244,7 +244,7 @@ def train():
     n_steps = 1024 
     
     # 800 iterations * 8192 batch size = 6,553,600 total timesteps
-    total_timesteps = 1000000
+    total_timesteps = 800000
     
     # Vectorized environments for multi-processing
     def make_env():

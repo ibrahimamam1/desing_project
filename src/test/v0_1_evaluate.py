@@ -66,7 +66,7 @@ intentions = {
     "asymetric_random": AsymmetricRandomNetwork
 }
 
-high_rate=500; medium_rate=300; low_rate=150
+high_rate=350; medium_rate=250; low_rate=150
 traffic_rates = {
     "Sc1_All_low":    [{"N": low_rate, "S": low_rate, "W": low_rate, "E": low_rate}],
     "Sc2_All_high_3H": [
@@ -94,7 +94,6 @@ traffic_rates = {
         {"N": medium_rate, "S": low_rate, "W": medium_rate, "E": low_rate},
         {"N": low_rate, "S": low_rate, "W": medium_rate, "E": medium_rate},
     ],
-    "Sc7_No_front":    [{"N": high_rate, "S": high_rate, "W": 0, "E": high_rate}],
 }
 
 CSV_HEADER = [

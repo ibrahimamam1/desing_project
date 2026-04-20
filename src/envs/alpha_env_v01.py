@@ -3,7 +3,7 @@ from gymnasium.spaces import Box
 import numpy as np
 import sys 
 import os 
-
+from shapely.geometry import LineString, Point
 sys.path.append(os.path.dirname(__file__))
 
 from base_env_single import Env_N
@@ -24,7 +24,7 @@ class AlphaEnv_v01(Env_N):
         # Per-neighbor (ego-relative): S_i = [ego_d_to_cp, other_dist_to_cp, v, cos Δθ, sin Δθ]
         self.neighbour_obs_features = 5
         self.routes = dict()
-
+        self.last_progress = 0.0
         super().__init__(env_params, sim_params, network, simulator)
         
         # Initialize the static conflict map
@@ -133,7 +133,7 @@ class AlphaEnv_v01(Env_N):
             other_speed = self.k.vehicle.get_speed(other_id)
             if other_speed is None or other_speed < 0:
                 other_speed = 0.0
-            other_speed = np.clip(other_speed / max_speed, 0.0, 1.0)
+            other_speed_norm = np.clip(other_speed / max_speed, 0.0, 1.0)
     
             # Neighbor heading
             other_heading = self.k.vehicle.get_heading(other_id)
@@ -142,57 +142,127 @@ class AlphaEnv_v01(Env_N):
             other_cos = np.cos(other_angle_rad)
     
             # --- Compute conflict point ---
-            vx_ego, vy_ego = ego_cos, ego_sin
-            vx_other, vy_other = other_cos, other_sin
-
-            det = (-ego_cos * other_sin) + (ego_sin * other_cos)
-
-            if abs(det) < 0.05:
-                # If parallel, ego is following other on same lane
-                dx = other_x - ego_x
-                dy = other_y - ego_y
-                
-                # Dot product gives the projection (longitudinal distance)
-                # t1 is how far ego must travel to reach 'other'
-                t1 = dx * vx_ego + dy * vy_ego
-                
-                # In a following scenario, the lead vehicle is already "at" the conflict
-                # relative to its own path start, so we set its distance to 0.
-                other_dist_to_cp = 0.0
-                
-                # Apply a 5.0m buffer for the lead vehicle's physical length
-                ego_dist_to_cp = max(0, t1)
-            else:  # Intersecting Case
-                dx = other_x - ego_x
-                dy = other_y - ego_y
-                
-                t1 = (dx * (-vy_other) - dy * (-vx_other)) / det
-                t2 = (dx * vy_ego - dy * vx_ego) / det
-            
-                # Lane width buffer (1.5m offset from center of 3m lane)
-                ego_dist_to_cp = max(0, t1)
-                other_dist_to_cp = max(0, t2)
+           # vx_ego, vy_ego = ego_cos, ego_sin
+           # vx_other, vy_other = other_cos, other_sin
+#
+           # det = (-ego_cos * other_sin) + (ego_sin * other_cos)
+#
+           # if abs(det) < 0.05:
+           #     # If parallel, ego is following other on same lane
+           #     dx = other_x - ego_x
+           #     dy = other_y - ego_y
+           #     
+           #     # Dot product gives the projection (longitudinal distance)
+           #     # t1 is how far ego must travel to reach 'other'
+           #     t1 = dx * vx_ego + dy * vy_ego
+           #     
+           #     # In a following scenario, the lead vehicle is already "at" the conflict
+           #     # relative to its own path start, so we set its distance to 0.
+           #     other_dist_to_cp = 0.0
+           #     
+           #     # Apply a 5.0m buffer for the lead vehicle's physical length
+           #     ego_dist_to_cp = max(0, t1)
+           # else:  # Intersecting Case
+           #     dx = other_x - ego_x
+           #     dy = other_y - ego_y
+           #     
+           #     t1 = (dx * (-vy_other) - dy * (-vx_other)) / det
+           #     t2 = (dx * vy_ego - dy * vx_ego) / det
+           # 
+           #     # Lane width buffer (1.5m offset from center of 3m lane)
+           #     ego_dist_to_cp = max(0, t1)
+           #     other_dist_to_cp = max(0, t2)
             
              # Normalise dist_to_cp
-            ego_dist_to_cp = 1.0 - np.exp(-ego_dist_to_cp / 10)
             edge = self.k.vehicle.get_edge(other_id)
             
-            rel_speed = ego_speed - other_speed 
+            #rel_speed = ego_speed - other_speed 
 
             # 2. TTC (Time to Collision) 
-            ttc = ego_dist_to_cp / max(rel_speed, 1e-3) if rel_speed > 0 else np.inf
-            ttc_norm = ttc_norm = 1.0 - np.exp(-ttc / 3.0)  # Normalize to a 10s horizon
+            #ttc = ego_dist_to_cp / max(rel_speed, 1e-3) if rel_speed > 0 else np.inf
+            #ttc_norm = ttc_norm = 1.0 - np.exp(-ttc / 3.0)  # Normalize to a 10s horizon
             
+            ego_line, ego_pos_on_edge = self._get_vehicle_polyline(ego_id)
+            other_line, other_pos_on_edge = self._get_vehicle_polyline(other_id)
+            
+            # Find where the two geometric paths intersect
+            intersection = ego_line.intersection(other_line)
+            
+            if intersection.is_empty:
+                # Paths never cross (e.g., parallel lanes, turning away from each other)
+                continue
+
+            # Initialize distances
+            ego_dist_to_cp = 0.0
+            other_dist_to_cp = 0.0
+            
+            ego_point = Point(ego_x, ego_y)
+            other_point = Point(other_x, other_y)
+            geom_type = intersection.geom_type
+
+            if geom_type in ['Point', 'MultiPoint']:
+                if geom_type == 'MultiPoint':
+                    # Find the first point of contact along each vehicle's respective path
+                    ego_proj = min([ego_line.project(p) for p in intersection.geoms])
+                    other_proj = min([other_line.project(p) for p in intersection.geoms])
+                else:
+                    # Standard single point
+                    ego_proj = ego_line.project(intersection)
+                    other_proj = other_line.project(intersection)
+
+                ego_dist_to_cp = max(0.0, ego_proj - ego_pos_on_edge)
+                other_dist_to_cp = max(0.0, other_proj - other_pos_on_edge)
+
+                
+            # Case B: Paths overlap (Car-Following or Merging)
+            elif geom_type in ['LineString', 'MultiLineString', 'GeometryCollection']:
+                is_car_following = False
+                SAME_PATH_TOLERANCE = 2.0  # meters tolerance to snap to shared path
+                
+                # 1. Check if Other is physically on Ego's path (Other is in front/behind Ego)
+                if ego_line.distance(other_point) < SAME_PATH_TOLERANCE:
+                    other_proj = ego_line.project(other_point)
+                    if other_proj >= ego_pos_on_edge:
+                        ego_dist_to_cp = max(0.0, other_proj - ego_pos_on_edge)
+                    else:
+                        other_dist_to_cp = max(0.0, ego_pos_on_edge - other_proj)
+                    is_car_following = True
+                    
+                # 2. Check if Ego is physically on Other's path (Ego is in front/behind Other)
+                elif other_line.distance(ego_point) < SAME_PATH_TOLERANCE:
+                    ego_proj = other_line.project(ego_point)
+                    if ego_proj >= other_pos_on_edge:
+                        other_dist_to_cp = max(0.0, ego_proj - other_pos_on_edge)
+                    else:
+                        ego_dist_to_cp = max(0.0, other_pos_on_edge - ego_proj)
+                    is_car_following = True
+                    
+                # 3. Merging (Vehicles are on different unshared branches approaching the overlap)
+                if not is_car_following:
+                    # The conflict point is the very beginning of the overlapping segment
+                    if hasattr(intersection, 'geoms'): 
+                        # Handles MultiLineString and GeometryCollection
+                        first_geom = intersection.geoms[0]
+                        # If the first item in the collection is a Line/Point, grab its first coord
+                        overlap_start = Point(first_geom.coords[0]) if hasattr(first_geom, 'coords') else Point(first_geom.geoms[0].coords[0])
+                    else:
+                        # Handles standard LineString
+                        overlap_start = Point(intersection.coords[0])
+                        
+                    # Both vehicles must travel to the shared merge point
+                    ego_dist_to_cp = max(0.0, ego_line.project(overlap_start) - ego_pos_on_edge)
+                    other_dist_to_cp = max(0.0, other_line.project(overlap_start) - other_pos_on_edge)
+
             # 3. Delta ETA (Difference in arrival times at Conflict Point)
             ego_eta = ego_dist_to_cp / max(ego_speed, 0.5)
             other_eta = other_dist_to_cp / max(other_speed, 0.5)
             delta_eta = ego_eta - other_eta
             delta_eta_norm =  np.tanh(delta_eta / 2.0)
 
+            ego_dist_to_cp = np.clip(ego_dist_to_cp / self.perception_radius, 0, 1)
             neighbors_info.append({
                 'ego_dist_to_cp':        ego_dist_to_cp,
-                'v':        other_speed,
-                'ttc':        ttc_norm,
+                'v':        other_speed_norm,
                 'd_eta':        delta_eta_norm,
                 'sin':     other_sin,
                 'cos':     other_cos,
@@ -352,7 +422,7 @@ class AlphaEnv_v01(Env_N):
         mapping[NS] = [WE, EW, SW, WN, ES] 
         mapping[SN] = [WE, EW, NE, WN, ES]
         mapping[EW] = [NS, SN, WN, NE, SW]
-        mapping[WE] = [NS, NE, ES, SN, SW, SE]
+        mapping[WE] = [NS, NE, ES, SN, SW, SE, WE]
 
         # 3. Left Turn Conflicts
         # A left turn conflicts with:
@@ -363,7 +433,7 @@ class AlphaEnv_v01(Env_N):
         # Note: Opposing lefts (e.g., NE and SW) usually pass each other safely.
         mapping[NE] = [SN, WE, EW, WN, ES, SE] 
         mapping[SW] = [NS, WE, EW, WN, ES, NW]
-        mapping[WN] = [EW, EN, SN, SW, NS, NE]
+        mapping[WN] = [EW, EN, SN, SW, NS, NE, WN]
         mapping[ES] = [WE, NS, SN, NE, SW, EN]
 
         # 4. Right Turn Conflicts
@@ -373,7 +443,7 @@ class AlphaEnv_v01(Env_N):
         mapping[NW] = [EW, SW]
         mapping[SE] = [WE, NE]
         mapping[EN] = [SN, WN]
-        mapping[WS] = [NS, ES]
+        mapping[WS] = [NS, ES, WS]
 
         return mapping
 
