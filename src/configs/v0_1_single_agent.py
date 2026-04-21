@@ -9,11 +9,13 @@ import random
 import math 
 from tqdm import tqdm
 
-parser = argparse.ArgumentParser(description="Train or evaluate the AlphaEnv PPO agent (Discrete).")
+parser = argparse.ArgumentParser(description="Train or evaluate the AlphaEnv PPO agent.")
 group = parser.add_mutually_exclusive_group(required=True)
 group.add_argument("--train", action="store_true", help="Run training loop.")
 group.add_argument("--eval",  metavar="CHECKPOINT_PATH",
                    help="Path to a checkpoint zip file to load and evaluate.")
+parser.add_argument("--version", choices=["heuristic_discrete", "heuristic_continuous"],
+                    default="heuristic_discrete", help="Environment version to use.")
 args = parser.parse_args()
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -99,8 +101,8 @@ vehicles.add(
 )
 
 ############################# InFlow Configuration #########################
-high = 450
-medium = 250
+high = 400
+medium = 275
 low = 150
 traffic_rate = {"N": high, "S": high, "W": medium, "E": high}
 
@@ -161,7 +163,11 @@ flow_params = dict(
 
 def create_flow_env(env_config):
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from src.envs.alpha_env_v01_discrete import AlphaEnv_v01_Discrete
+    
+    if args.version == "heuristic_continuous":
+        from src.envs.alpha_env_v01 import AlphaEnv_v01 as EnvClass
+    else:
+        from src.envs.alpha_env_v01_discrete import AlphaEnv_v01_Discrete as EnvClass
 
     params       = flow_params
     _vehicles    = deepcopy(params["veh"])
@@ -179,7 +185,8 @@ def create_flow_env(env_config):
         initial_config=_initial_config,
         traffic_lights=traffic_lights,
     )
-    env = AlphaEnv_v01_Discrete(
+    
+    env = EnvClass(
         env_params=params["env"],
         sim_params=_sim_params,
         network=network,
@@ -210,26 +217,27 @@ class TrafficCallback(BaseCallback):
                 
         return True
 
-def linear_schedule(initial_value: float):
+def linear_schedule_with_floor(initial_value: float, min_value: float):
     """
-    Linear learning rate schedule.
+    Linear learning rate schedule that decays to a minimum floor.
     """
     def func(progress_remaining: float) -> float:
         # progress_remaining goes from 1.0 down to 0.0
-        return progress_remaining * initial_value
+        decayed_lr = progress_remaining * initial_value
+        return max(min_value, decayed_lr)
     return func
 
 # ---------------------------------------------
 # Checkpoint helpers
 # ---------------------------------------------
-ENV_NAME  = "alpha_env_v01_heuristic_discrete"
+ENV_NAME  = "alpha_env_v01_" + args.version
 ALGO_NAME = "PPO"
 
 CHECKPOINT_ROOT = os.path.join(
-    os.getcwd(), "checkpoints/v0_1_heuristic_discrete",
-    f"{ENV_NAME}_{ALGO_NAME}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+    os.getcwd(), "checkpoints/v0_1",
+    f"{args.version}_{ENV_NAME}_{ALGO_NAME}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
 )
-TENSORBOARD_DIR = os.path.join(os.getcwd(), "tensorboard_logs/v0_1_heuristic_discrete")
+TENSORBOARD_DIR = os.path.join(os.getcwd(), "tensorboard_logs/v0_1_",f"{args.version}")
 RUN_NAME = f"flow_ppo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 TENSORBOARD_RUN_DIR = os.path.join(TENSORBOARD_DIR, RUN_NAME)
 
@@ -244,7 +252,7 @@ def train():
     n_steps = 1024 
     
     # 800 iterations * 8192 batch size = 6,553,600 total timesteps
-    total_timesteps = 800000
+    total_timesteps = 1500000
     
     # Vectorized environments for multi-processing
     def make_env():
@@ -256,7 +264,7 @@ def train():
     model = PPO(
         policy="MlpPolicy",
         env=vec_env,
-        learning_rate=linear_schedule(3e-4), # Translated LR schedule
+        learning_rate=linear_schedule_with_floor(3e-4, 1e-5),
         n_steps=n_steps,
         batch_size=256,
         n_epochs=10,
@@ -264,7 +272,7 @@ def train():
         gae_lambda=0.95,
         clip_range=0.25,
         max_grad_norm=0.5,
-        ent_coef=0.01, # Simplified entropy schedule
+        ent_coef=0.01,
         tensorboard_log=TENSORBOARD_RUN_DIR,
         verbose=1,
     )

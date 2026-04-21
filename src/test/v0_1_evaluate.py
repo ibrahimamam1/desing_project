@@ -66,7 +66,7 @@ intentions = {
     "asymetric_random": AsymmetricRandomNetwork
 }
 
-high_rate=350; medium_rate=250; low_rate=150
+high_rate=400; medium_rate=275; low_rate=150
 traffic_rates = {
     "Sc1_All_low":    [{"N": low_rate, "S": low_rate, "W": low_rate, "E": low_rate}],
     "Sc2_All_high_3H": [
