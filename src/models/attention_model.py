@@ -1,34 +1,26 @@
-import numpy as np
 import torch
 import torch.nn as nn
+import numpy as np
+import gymnasium as gym
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
-from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
-from ray.rllib.utils.annotations import override
-
-
-class AttentionPolicyModel(TorchModelV2, nn.Module):
+class AttentionFeatureExtractor(BaseFeaturesExtractor):
     """
-    Cross-attention policy model for multi-agent intersection control.
-    
-    Expected flat observation layout:
-        [ego_features (2), neighbor_features (max_k * 2), neighbor_mask (max_k)]
+    Cross-attention feature extractor for multi-agent intersection control.
     """
-
-    def __init__(self, obs_space, action_space, num_outputs, model_config, name, **kwargs):
-        TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
-        nn.Module.__init__(self)
-
-        # --- Hyperparameters ---
-        custom_cfg = model_config.get("custom_model_config", {})
+    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256, 
+                 ego_features: int = 4, neighbor_features: int = 5, max_neighbors: int = 8, 
+                 embed_dim: int = 64, num_heads: int = 4):
         
-        self.ego_features = custom_cfg.get("ego_features", 4)
-        self.neighbor_features = custom_cfg.get("neighbor_features", 5)
-        self.max_neighbors = custom_cfg.get("max_neighbors", 5)
-        self.embed_dim = custom_cfg.get("embed_dim", 64)
-        self.num_heads = custom_cfg.get("num_heads", 4)
-        self.mlp_hidden = custom_cfg.get("mlp_hidden", 256)
+        # Initialize the base class with the expected output dimension
+        super().__init__(observation_space, features_dim)
 
-        # --- Encoders (Added LayerNorm for stability) ---
+        self.ego_features = ego_features
+        self.neighbor_features = neighbor_features
+        self.max_neighbors = max_neighbors
+        self.embed_dim = embed_dim
+
+        # --- Encoders ---
         self.ego_encoder = nn.Sequential(
             nn.Linear(self.ego_features, self.embed_dim),
             nn.LayerNorm(self.embed_dim), 
@@ -43,39 +35,22 @@ class AttentionPolicyModel(TorchModelV2, nn.Module):
         # --- Multi-Head Cross-Attention ---
         self.attention = nn.MultiheadAttention(
             embed_dim=self.embed_dim,
-            num_heads=self.num_heads,
+            num_heads=num_heads,
             batch_first=True,  
         )
 
-        # --- Output MLPs ---
+        # --- Context Processing ---
         context_dim = self.embed_dim * 2  
-        
-        # Crucial Fix: Normalize the context vector before the MLP
         self.context_norm = nn.LayerNorm(context_dim)
 
-        self.policy_mlp = nn.Sequential(
-            nn.Linear(context_dim, self.mlp_hidden),
-            nn.ReLU(),
-            nn.Linear(self.mlp_hidden, num_outputs),
+        # Project the concatenated context down to the features_dim expected by SB3
+        self.projection = nn.Sequential(
+            nn.Linear(context_dim, features_dim),
+            nn.ReLU()
         )
 
-        self.value_mlp = nn.Sequential(
-            nn.Linear(context_dim, self.mlp_hidden),
-            nn.ReLU(),
-            nn.Linear(self.mlp_hidden, 1),
-        )
-        
-        # Crucial Fix: Initialize final policy layer to output near-zero actions initially
-        # This prevents the Gaussian mean from starting at massive values
-        nn.init.orthogonal_(self.policy_mlp[-1].weight, gain=0.01)
-        nn.init.constant_(self.policy_mlp[-1].bias, 0.0)
-
-        # Cache for value function
-        self._context = None
-
-    @override(TorchModelV2)
-    def forward(self, input_dict, state, seq_lens):
-        obs = input_dict["obs"].float()  
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        obs = observations.float()
         
         # --- 1. Split observation ---
         ego_end = self.ego_features
@@ -85,36 +60,31 @@ class AttentionPolicyModel(TorchModelV2, nn.Module):
         neighbor_raw = obs[:, ego_end:neighbor_end]         
         mask_raw = obs[:, neighbor_end:]                    
 
-        # Reshape neighbors: (B, max_neighbors, features)
         neighbor_raw = neighbor_raw.reshape(-1, self.max_neighbors, self.neighbor_features)
 
         # --- 2. Encode ---
-        ego_embed = self.ego_encoder(ego_raw)               
+        ego_embed = self.ego_encoder(ego_raw)                
         neighbor_embeds = self.neighbor_encoder(neighbor_raw) 
 
         # --- 3. Build attention mask ---
         key_padding_mask = (mask_raw < 0.5)  
-
         all_masked = key_padding_mask.all(dim=1)  
         
         # --- 4. Cross-Attention ---
         query = ego_embed.unsqueeze(1)   
-        key = neighbor_embeds            
-        value = neighbor_embeds          
-
+        
         safe_mask = key_padding_mask.clone()
         safe_mask[all_masked] = False  
 
         attn_output, _ = self.attention(
             query=query,
-            key=key,
-            value=value,
+            key=neighbor_embeds,
+            value=neighbor_embeds,
             key_padding_mask=safe_mask,
         )  
 
         attn_output = attn_output.squeeze(1)  
 
-        # Zero out attention output for rows where all neighbors were masked
         attn_output = torch.where(
             all_masked.unsqueeze(-1),
             torch.zeros_like(attn_output),
@@ -123,17 +93,7 @@ class AttentionPolicyModel(TorchModelV2, nn.Module):
 
         # --- 5. Concatenate and decode ---
         context = torch.cat([ego_embed, attn_output], dim=-1)  
-        
-        # Apply normalization to the concatenated output
         context = self.context_norm(context)
         
-        self._context = context  
-
-        policy_out = self.policy_mlp(context)  
-
-        return policy_out, state
-
-    @override(TorchModelV2)
-    def value_function(self):
-        assert self._context is not None, "forward() must be called before value_function()"
-        return self.value_mlp(self._context).squeeze(-1)
+        # Return the final latent representation to SB3
+        return self.projection(context)

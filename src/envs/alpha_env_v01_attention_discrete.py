@@ -46,7 +46,7 @@ class AlphaEnv_v01_AttentionDiscrete(AlphaEnv_v01_Attention):
         self.k.vehicle.apply_acceleration(rl_ids, [real_action])
 
 
-   def compute_reward(self, agent_id, fail, goal_reached, current_action=None):
+    def compute_reward(self, agent_id, fail, goal_reached, current_action=None):
         if agent_id not in self.k.vehicle.get_ids():
             return 0.0
         

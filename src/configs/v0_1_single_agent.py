@@ -1,20 +1,15 @@
 import argparse
 import os
 import sys
-import csv
 from copy import deepcopy
 from datetime import datetime
-import shutil
-import random
-import math 
-from tqdm import tqdm
 
 parser = argparse.ArgumentParser(description="Train or evaluate the AlphaEnv PPO agent.")
 group = parser.add_mutually_exclusive_group(required=True)
 group.add_argument("--train", action="store_true", help="Run training loop.")
 group.add_argument("--eval",  metavar="CHECKPOINT_PATH",
                    help="Path to a checkpoint zip file to load and evaluate.")
-parser.add_argument("--version", choices=["heuristic_discrete", "heuristic_continuous"],
+parser.add_argument("--version", choices=["heuristic_discrete", "heuristic_continuous", "attention_discrete", "attention_continous"],
                     default="heuristic_discrete", help="Environment version to use.")
 args = parser.parse_args()
 
@@ -166,8 +161,12 @@ def create_flow_env(env_config):
     
     if args.version == "heuristic_continuous":
         from src.envs.alpha_env_v01 import AlphaEnv_v01 as EnvClass
-    else:
+    elif args.version == "heuristic_discrete":
         from src.envs.alpha_env_v01_discrete import AlphaEnv_v01_Discrete as EnvClass
+    elif args.version == "attention_discrete":
+        from src.envs.alpha_env_v01_attention_discrete import AlphaEnv_v01_AttentionDiscrete as EnvClass
+    elif args.version == "attention_continous":
+        from src.envs.alpha_env_v01_attention_continous import AlphaEnv_v01_Attention as EnvClass
 
     params       = flow_params
     _vehicles    = deepcopy(params["veh"])
@@ -242,6 +241,8 @@ RUN_NAME = f"flow_ppo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 TENSORBOARD_RUN_DIR = os.path.join(TENSORBOARD_DIR, RUN_NAME)
 
 
+from src.models.attention_model import AttentionFeatureExtractor
+
 def train():
     os.makedirs(CHECKPOINT_ROOT, exist_ok=True)
     
@@ -258,12 +259,28 @@ def train():
     def make_env():
         return create_flow_env({"render": False})
     
-    # If SUMO crashes due to Traci port conflicts, try switching SubprocVecEnv to DummyVecEnv
+    policy_kwargs = None
+    # FIX 2: Correct string method (startswith)
+    if args.version.startswith("attention"):
+        policy_kwargs = dict(
+            features_extractor_class=AttentionFeatureExtractor,
+            features_extractor_kwargs=dict(
+                features_dim=256,
+                ego_features=4, 
+                neighbor_features=5, 
+                max_neighbors=5,
+                embed_dim=64, 
+                num_heads=4
+            ),
+            net_arch=dict(pi=[256, 256], vf=[256, 256]) 
+        )
+
     vec_env = SubprocVecEnv([make_env for _ in range(num_workers)])
 
     model = PPO(
         policy="MlpPolicy",
         env=vec_env,
+        policy_kwargs=policy_kwargs,
         learning_rate=linear_schedule_with_floor(3e-4, 1e-5),
         n_steps=n_steps,
         batch_size=256,
@@ -349,12 +366,12 @@ def print_neighbor_table(step_num, obs, reward, neighbors_info, terminated, trun
             dist_norm = n['distance']
             speed_pct = n['v']
             ego_d = n['ego_dist_to_cp']
-            delta_eta = n['d_eta']
+            delta_eta = n['delta_eta'] # FIX 4: Corrected key lookup 
             bar = _risk_bar(ego_d)
             edge = n['edge'][:12].ljust(12)
 
             print(f"║  {i+1:<3} {direction:<4} {dist_norm:>6.2f} {speed_pct:>6.2f} "
-                f" {ego_d:>6.2f} {delta_eta:>6.2f}   {edge}║")
+                  f" {ego_d:>6.2f} {delta_eta:>6.2f}   {edge}║")
     
     print(f"╚{'═'*72}╝")
     print()
