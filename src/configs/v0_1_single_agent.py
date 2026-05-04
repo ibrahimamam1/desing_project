@@ -29,7 +29,8 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
-
+from src.ppo.multi_discount_buffer import MultiDiscountRolloutBuffer
+from src.ppo.multi_discount_ppo import MultiDiscountPPO
 IDM_acceleration_controller = IDMController
 RL_vehicle_acceleration_controller = RLController
 
@@ -102,7 +103,7 @@ low = 150
 traffic_rate = {"N": high, "S": high, "W": medium, "E": high}
 
 inflow = InFlows()
- 
+
 inflow.add(veh_type="NonRL", edge="E#T-X", probability=traffic_rate["N"]/3600,
            depart_lane=0, depart_speed=initial_speed, begin=1, color="green")
 inflow.add(veh_type="NonRL", edge="E#R-X", probability=traffic_rate["E"]/3600,
@@ -158,7 +159,7 @@ flow_params = dict(
 
 def create_flow_env(env_config):
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    
+
     if args.version == "heuristic_continuous":
         from src.envs.alpha_env_v01 import AlphaEnv_v01 as EnvClass
     elif args.version == "heuristic_discrete":
@@ -184,14 +185,13 @@ def create_flow_env(env_config):
         initial_config=_initial_config,
         traffic_lights=traffic_lights,
     )
-    
+
     env = EnvClass(
         env_params=params["env"],
         sim_params=_sim_params,
         network=network,
         simulator=params["simulator"],
     )
-    # Wrap in Monitor to log episode returns/lengths standard to SB3
     return Monitor(env)
 
 class TrafficCallback(BaseCallback):
@@ -202,26 +202,19 @@ class TrafficCallback(BaseCallback):
         super(TrafficCallback, self).__init__(verbose)
 
     def _on_step(self) -> bool:
-        # Check if environment provided an info dictionary at this step
         for info in self.locals.get("infos", []):
             if "telemetry" in info:
                 telemetry = info["telemetry"]
                 if telemetry is None:
                     continue
-                
-                # Log metrics to TensorBoard (averaged automatically over the rollout)
                 self.logger.record("custom_metrics/collision", 1.0 if telemetry.get("agent_collision", False) else 0.0)
                 self.logger.record("custom_metrics/success", 1.0 if telemetry.get("agent_success", False) else 0.0)
                 self.logger.record("custom_metrics/avg_speed", float(telemetry.get("agent_avg_speed", 0.0)))
-                
+
         return True
 
 def linear_schedule_with_floor(initial_value: float, min_value: float):
-    """
-    Linear learning rate schedule that decays to a minimum floor.
-    """
     def func(progress_remaining: float) -> float:
-        # progress_remaining goes from 1.0 down to 0.0
         decayed_lr = progress_remaining * initial_value
         return max(min_value, decayed_lr)
     return func
@@ -245,39 +238,36 @@ from src.models.attention_model import AttentionFeatureExtractor
 
 def train():
     os.makedirs(CHECKPOINT_ROOT, exist_ok=True)
-    
+
     print(f"\n--- TRAINING START (Discrete - SB3) ---")
     print(f"TensorBoard → {TENSORBOARD_RUN_DIR}")
-    
+
     num_workers = 8
-    n_steps = 1024 
-    
-    # 800 iterations * 8192 batch size = 6,553,600 total timesteps
+    n_steps = 1024
+
     total_timesteps = 1500000
-    
-    # Vectorized environments for multi-processing
+
     def make_env():
         return create_flow_env({"render": False})
-    
+
     policy_kwargs = None
-    # FIX 2: Correct string method (startswith)
     if args.version.startswith("attention"):
         policy_kwargs = dict(
             features_extractor_class=AttentionFeatureExtractor,
             features_extractor_kwargs=dict(
                 features_dim=256,
-                ego_features=4, 
-                neighbor_features=5, 
+                ego_features=4,
+                neighbor_features=5,
                 max_neighbors=5,
-                embed_dim=64, 
+                embed_dim=64,
                 num_heads=4
             ),
-            net_arch=dict(pi=[256, 256], vf=[256, 256]) 
+            net_arch=dict(pi=[256, 256], vf=[256, 256])
         )
 
     vec_env = SubprocVecEnv([make_env for _ in range(num_workers)])
 
-    model = PPO(
+    model = MultiDiscountPPO(
         policy="MlpPolicy",
         env=vec_env,
         policy_kwargs=policy_kwargs,
@@ -285,8 +275,8 @@ def train():
         n_steps=n_steps,
         batch_size=256,
         n_epochs=10,
-        gamma=0.98,
-        gae_lambda=0.95,
+        gamma=0.99,         # gamma2 — used by SB3 for value bootstrap
+        gae_lambda=0.95,    # lambda2 — kept for SB3 compatibility
         clip_range=0.25,
         max_grad_norm=0.5,
         ent_coef=0.01,
@@ -294,9 +284,25 @@ def train():
         verbose=1,
     )
 
+    # --- Inject Multi-Discount Rollout Buffer ---
+    # Replace SB3's default buffer with our custom dual-GAE buffer
+    model.rollout_buffer = MultiDiscountRolloutBuffer(
+        buffer_size=n_steps,
+        observation_space=vec_env.observation_space,
+        action_space=vec_env.action_space,
+        device=model.device,
+        n_envs=num_workers,
+        gamma1=0.90,   # short horizon gamma (safety/cruise)
+        gamma2=0.99,   # long horizon gamma (progress/traj)
+        lambda1=0.90,  # short horizon lambda
+        lambda2=0.95,  # long horizon lambda
+        w1=0.4,        # weight for safety advantage
+        w2=0.6,        # weight for progress advantage
+    )
+
     # Train
     model.learn(
-        total_timesteps=total_timesteps, 
+        total_timesteps=total_timesteps,
         callback=TrafficCallback(),
         progress_bar=True
     )
@@ -308,8 +314,7 @@ def train():
     print("\n--- TRAINING COMPLETE ---")
     print(f"Saved Model  → {final_model_path}.zip")
     print(f"TensorBoard → {TENSORBOARD_RUN_DIR}")
-    
-    # Optional: If your plot_results supports SB3 tensorboard formatting
+
     plot_out = os.path.join(root_dir, "outputs", "train", RUN_NAME)
     try:
         plot_results(logdir=TENSORBOARD_RUN_DIR, output_dir=plot_out, exp_name=RUN_NAME)
@@ -333,8 +338,6 @@ def _risk_bar(value, width=10):
 def _angle_arrow(sin_val, cos_val):
     import math
     angle_deg = math.degrees(math.atan2(sin_val, cos_val))
-    # atan2: east=0°, north=90°, west=±180°, south=-90°
-    # Shift so that east (0°) maps to index 0, going CCW
     idx = round(angle_deg / 45) % 8
     arrows = ["→", "↗", "↑", "↖", "←", "↙", "↓", "↘"]
     return arrows[idx]
@@ -342,8 +345,6 @@ def _angle_arrow(sin_val, cos_val):
 def print_neighbor_table(step_num, obs, reward, neighbors_info, terminated, truncated):
     os.system("cls" if os.name == "nt" else "clear")
 
-    # --- Ego stats from obs vector ---
-    # SB3 DummyVecEnv wraps obs in an extra array dimension: obs[0][0]
     dis_to_goal = obs[0][0]
     ego_speed = obs[0][1]
     ego_sin, ego_cos = obs[0][2], obs[0][3]
@@ -366,20 +367,20 @@ def print_neighbor_table(step_num, obs, reward, neighbors_info, terminated, trun
             dist_norm = n['distance']
             speed_pct = n['v']
             ego_d = n['ego_dist_to_cp']
-            delta_eta = n['delta_eta'] # FIX 4: Corrected key lookup 
+            delta_eta = n['delta_eta']
             bar = _risk_bar(ego_d)
             edge = n['edge'][:12].ljust(12)
 
             print(f"║  {i+1:<3} {direction:<4} {dist_norm:>6.2f} {speed_pct:>6.2f} "
                   f" {ego_d:>6.2f} {delta_eta:>6.2f}   {edge}║")
-    
+
     print(f"╚{'═'*72}╝")
     print()
 
 def evaluate(checkpoint_path: str, num_iterations: int = 20):
     if not checkpoint_path.endswith('.zip'):
         checkpoint_path += '.zip'
-        
+
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
@@ -395,22 +396,20 @@ def evaluate(checkpoint_path: str, num_iterations: int = 20):
         done = False
         total_reward = 0.0
         step = 0
-        
+
         while not done:
             action, _states = model.predict(obs, deterministic=True)
             obs, reward, dones, infos = eval_env.step(action)
-            
-            # Extract from SB3's vectorized returns
+
             done = dones[0]
             step_reward = reward[0]
             info = infos[0]
             total_reward += step_reward
             step += 1
-            
-            # Print the visual table
+
             neighbors = info.get("neighbors", [])
             print_neighbor_table(step, obs, step_reward, neighbors, done, False)
-            
+
         print(f"  Episode {episode+1}: reward={total_reward:.3f}")
         rewards.append(total_reward)
 
