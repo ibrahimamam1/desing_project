@@ -358,45 +358,30 @@ class AlphaEnv_v01(Env_N):
         self.k.vehicle.apply_acceleration(rl_ids, [real_action])
 
     def compute_reward(self, agent_id, fail, goal_reached, current_action=None):
-        if agent_id not in self.k.vehicle.get_ids():
-            return 0.0
-        
-        # 1. Sparse Terminal Rewards
-        if fail:           return -10.0
-        if goal_reached:   return 15.0
-        
-        obs_info = getattr(self, 'last_neighbors_info', []) 
-        
-        # 2. Progress Reward
-        ego_dis = self.k.vehicle.get_distance(agent_id)
-        if ego_dis == -1001: ego_dis = 0.0
-        route = self.k.vehicle.get_route(agent_id)
-        total_route_length = max(sum([self.k.network.edge_length(e) for e in route]), 1e-4)
-        
-        progress_norm = np.clip(ego_dis / total_route_length, 0.0, 1.0)
-        
-        if not hasattr(self, 'last_progress'):
-            self.last_progress = progress_norm
+        if fail:
+            return -1  
+        if goal_reached:
+            return 1   
             
-        progress_delta = progress_norm - self.last_progress 
-        self.last_progress = progress_norm
-        
-        # 3. Safety Penalty
-        safety_penalty = 0.0
-        for n in obs_info: 
-            abs_d_eta = abs(n['d_eta'])
-            # Only penalize if they are projected to arrive within a tight window of each other
-            if abs_d_eta < 0.2: 
-                # Exponential penalty: spikes hard as d_eta approaches 0
-                safety_penalty += -np.exp(-abs_d_eta * 10.0) 
+        if agent_id not in self.k.vehicle.get_rl_ids():
+            return 0.0
 
-        # 4. Dense Reward Assembly
-        return (
-            10.0 * progress_delta     # reward for moving towards goal 
-            + 1.0 * safety_penalty     # Penalty for crossing intersection unsafely
-            - 0.01                     # Time penalty
-        )
-    
+        speed = self.k.vehicle.get_speed(agent_id)
+        max_speed = self.k.network.max_speed()
+
+        # Step rewards balanced to prevent "suicide loophole"
+        speed_reward = 0.05 * (speed / max_speed)
+        time_penalty = -0.02 
+        
+        # Action smoothness penalty
+        action_penalty = 0.0
+        if current_action is not None:
+            action_val = float(current_action[0])
+            action_penalty = -0.02 * abs(action_val - self.last_action)
+            self.last_action = action_val
+        
+        return speed_reward + time_penalty + action_penalty
+
     def _build_conflict_map(self):
         """
         Statically maps a (Source, Destination) pair to a list of conflicting 
