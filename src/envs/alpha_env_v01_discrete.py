@@ -1,11 +1,15 @@
 #============DISCRETE ACTION SPACE VARIANT OF V0.1 ENV============
+
 import gymnasium as gym
 from gymnasium.spaces import Discrete, Box
 import numpy as np
 import sys
 import os
+
 sys.path.append(os.path.dirname(__file__))
+
 from alpha_env_v01 import AlphaEnv_v01
+
 class AlphaEnv_v01_Discrete(AlphaEnv_v01):
     """
     Same as AlphaEnv_v01 but with a discrete action space.
@@ -14,14 +18,17 @@ class AlphaEnv_v01_Discrete(AlphaEnv_v01):
     """
 
     ACCEL_BINS = [-1.0, -0.5, 0.0, 0.5, 1.0]
+
     def __init__(self, env_params, sim_params, network, simulator='traci'):
         super().__init__(env_params, sim_params, network, simulator)
 
         # Override action space to discrete
         self.action_space = Discrete(len(self.ACCEL_BINS))
+
     def _apply_rl_actions(self, rl_action):
         max_accel = self.env_params.additional_params['max_accel']
         max_decel = self.env_params.additional_params['max_decel']
+
         # Map discrete action index to normalized value
         action_idx = int(rl_action)
         action_val = self.ACCEL_BINS[action_idx]
@@ -31,22 +38,20 @@ class AlphaEnv_v01_Discrete(AlphaEnv_v01):
             real_action = action_val * max_accel
         else:
             real_action = action_val * max_decel
+
         rl_ids = []
         rl_ids.append(self.agent_id)
         if not rl_ids:
             return
         self.k.vehicle.apply_acceleration(rl_ids, [real_action])
+
     def compute_reward(self, agent_id, fail, goal_reached, current_action=None):
         if agent_id not in self.k.vehicle.get_ids():
             return 0.0
 
         # 1. Sparse Terminal Rewards
-        if fail:
-            self.last_r_traj, self.last_r_cruise = 0.0, -10.0
-            return -10.0
-        if goal_reached:
-            self.last_r_traj, self.last_r_cruise = 15.0, 0.0
-            return 15.0
+        if fail:           return -10.0
+        if goal_reached:   return 15.0
 
         # Fallback to empty list if no neighbors
         obs_info = getattr(self, 'last_neighbors_info', [])
@@ -78,12 +83,9 @@ class AlphaEnv_v01_Discrete(AlphaEnv_v01):
                 # Exponential penalty: spikes hard as d_eta approaches 0
                 safety_penalty += -np.exp(-abs_d_eta * 10.0)
 
-        # 4. Dense Reward Assembly — Split for Multi-Discount GAE
-        r_traj   = 10.0 * progress_delta        # Long horizon: progress toward goal
-        r_cruise = 1.0 * safety_penalty - 0.01  # Short horizon: safety + time penalty
-
-        # Store components so base_env can pass them through infos
-        self.last_r_traj   = r_traj
-        self.last_r_cruise = r_cruise
-
-        return r_cruise + r_traj  # Single scalar — SB3 interface unchanged
+        # 4. Dense Reward Assembly
+        return (
+            10.0 * progress_delta      # Boosted weight to compete with time penalty
+            + 1.0 * safety_penalty     # Penalty for crossing intersection unsafely
+            - 0.01                     # Time penalty
+        )

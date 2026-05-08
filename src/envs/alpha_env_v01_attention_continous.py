@@ -119,6 +119,12 @@ class AlphaEnv_v01_Attention(Env_N):
              # Normalise dist_to_cp
             edge = self.k.vehicle.get_edge(other_id)
 
+            #rel_speed = ego_speed - other_speed
+
+            # 2. TTC (Time to Collision)
+            #ttc = ego_dist_to_cp / max(rel_speed, 1e-3) if rel_speed > 0 else np.inf
+            #ttc_norm = ttc_norm = 1.0 - np.exp(-ttc / 3.0)  # Normalize to a 10s horizon
+
             ego_line, ego_pos_on_edge = self._get_vehicle_polyline(ego_id)
             other_line, other_pos_on_edge = self._get_vehicle_polyline(other_id)
 
@@ -126,6 +132,7 @@ class AlphaEnv_v01_Attention(Env_N):
             intersection = ego_line.intersection(other_line)
 
             if intersection.is_empty:
+                # Paths never cross (e.g., parallel lanes, turning away from each other)
                 continue
 
             # Initialize distances
@@ -138,19 +145,24 @@ class AlphaEnv_v01_Attention(Env_N):
 
             if geom_type in ['Point', 'MultiPoint']:
                 if geom_type == 'MultiPoint':
+                    # Find the first point of contact along each vehicle's respective path
                     ego_proj = min([ego_line.project(p) for p in intersection.geoms])
                     other_proj = min([other_line.project(p) for p in intersection.geoms])
                 else:
+                    # Standard single point
                     ego_proj = ego_line.project(intersection)
                     other_proj = other_line.project(intersection)
 
                 ego_dist_to_cp = max(0.0, ego_proj - ego_pos_on_edge)
                 other_dist_to_cp = max(0.0, other_proj - other_pos_on_edge)
 
+
+            # Case B: Paths overlap (Car-Following or Merging)
             elif geom_type in ['LineString', 'MultiLineString', 'GeometryCollection']:
                 is_car_following = False
-                SAME_PATH_TOLERANCE = 2.0
+                SAME_PATH_TOLERANCE = 2.0  # meters tolerance to snap to shared path
 
+                # 1. Check if Other is physically on Ego's path (Other is in front/behind Ego)
                 if ego_line.distance(other_point) < SAME_PATH_TOLERANCE:
                     other_proj = ego_line.project(other_point)
                     if other_proj >= ego_pos_on_edge:
@@ -159,6 +171,7 @@ class AlphaEnv_v01_Attention(Env_N):
                         other_dist_to_cp = max(0.0, ego_pos_on_edge - other_proj)
                     is_car_following = True
 
+                # 2. Check if Ego is physically on Other's path (Ego is in front/behind Other)
                 elif other_line.distance(ego_point) < SAME_PATH_TOLERANCE:
                     ego_proj = other_line.project(ego_point)
                     if ego_proj >= other_pos_on_edge:
@@ -167,31 +180,37 @@ class AlphaEnv_v01_Attention(Env_N):
                         ego_dist_to_cp = max(0.0, other_pos_on_edge - ego_proj)
                     is_car_following = True
 
+                # 3. Merging (Vehicles are on different unshared branches approaching the overlap)
                 if not is_car_following:
+                    # The conflict point is the very beginning of the overlapping segment
                     if hasattr(intersection, 'geoms'):
+                        # Handles MultiLineString and GeometryCollection
                         first_geom = intersection.geoms[0]
+                        # If the first item in the collection is a Line/Point, grab its first coord
                         overlap_start = Point(first_geom.coords[0]) if hasattr(first_geom, 'coords') else Point(first_geom.geoms[0].coords[0])
                     else:
+                        # Handles standard LineString
                         overlap_start = Point(intersection.coords[0])
 
+                    # Both vehicles must travel to the shared merge point
                     ego_dist_to_cp = max(0.0, ego_line.project(overlap_start) - ego_pos_on_edge)
                     other_dist_to_cp = max(0.0, other_line.project(overlap_start) - other_pos_on_edge)
 
-            # 3. Delta ETA
+            # 3. Delta ETA (Difference in arrival times at Conflict Point)
             ego_eta = ego_dist_to_cp / max(ego_speed, 0.5)
             other_eta = other_dist_to_cp / max(other_speed, 0.5)
             delta_eta = ego_eta - other_eta
-            delta_eta_norm = np.tanh(delta_eta / 2.0)
+            delta_eta_norm =  np.tanh(delta_eta / 2.0)
 
             ego_dist_to_cp = np.clip(ego_dist_to_cp / self.perception_radius, 0, 1)
             neighbors_info.append({
-                    'ego_dist_to_cp': ego_dist_to_cp,
-                    'v':              other_speed,
-                    'd_eta':          delta_eta_norm,
-                    'sin':            other_sin,
-                    'cos':            other_cos,
-                    'edge':           edge,
-                    'distance':       distance,
+                    'ego_dist_to_cp':        ego_dist_to_cp,
+                    'v':        other_speed,
+                    'd_eta':        delta_eta_norm,
+                    'sin':     other_sin,
+                    'cos':     other_cos,
+                    'edge':     edge,
+                    'distance': distance,
                 })
 
         # Sort by physical distance (closest first), take top k
@@ -207,15 +226,19 @@ class AlphaEnv_v01_Attention(Env_N):
                 neighbor['cos'],
             ])
 
+        # Pad if fewer than max_neighbours: [ego_d_to_cp=1(safe), v=0, ttc=1(safe), delta_eta=1(safe), sin=0, cos=0]
         num_actual = len(neighbors_info)
         if num_actual < self.max_neighbours:
             missing_count = self.max_neighbours - num_actual
             for _ in range(missing_count):
                 obs_vector.extend([1.0, 0.0, 1.0, 0.0, 0.0])
 
+        # Append neighbor mask: 1.0 = real neighbor, 0.0 = padded
         neighbor_mask = [1.0] * num_actual + [0.0] * (self.max_neighbours - num_actual)
         obs_vector.extend(neighbor_mask)
 
+
+        # --- THE FAILSAFE ---
         obs_array = np.array(obs_vector, dtype=np.float32)
         return obs_array, neighbors_info
 
@@ -223,14 +246,16 @@ class AlphaEnv_v01_Attention(Env_N):
         max_accel = self.env_params.additional_params['max_accel']
         max_decel = self.env_params.additional_params['max_decel']
 
+        # 1. Safely extract and sanitize the action
         try:
             action_val = float(rl_action[0]) if isinstance(rl_action, (list, np.ndarray)) else float(rl_action)
         except (TypeError, ValueError):
             action_val = 0.0
 
         if np.isnan(action_val) or np.isinf(action_val):
-            action_val = 0.0
+            action_val = 0.0  # Fallback to zero acceleration if NaN
 
+        # Denormalize from [-1, 1] to [-max_decel, max_accel]
         if action_val >= 0:
             real_action = action_val * max_accel
         else:
@@ -245,12 +270,8 @@ class AlphaEnv_v01_Attention(Env_N):
             return 0.0
 
         # 1. Sparse Terminal Rewards
-        if fail:
-            self.last_r_traj, self.last_r_cruise = 0.0, -10.0
-            return -10.0
-        if goal_reached:
-            self.last_r_traj, self.last_r_cruise = 15.0, 0.0
-            return 15.0
+        if fail:           return -10.0
+        if goal_reached:   return 15.0
 
         obs_info = getattr(self, 'last_neighbors_info', [])
 
@@ -272,18 +293,17 @@ class AlphaEnv_v01_Attention(Env_N):
         safety_penalty = 0.0
         for n in obs_info:
             abs_d_eta = abs(n['d_eta'])
+            # Only penalize if they are projected to arrive within a tight window of each other
             if abs_d_eta < 0.2:
+                # Exponential penalty: spikes hard as d_eta approaches 0
                 safety_penalty += -np.exp(-abs_d_eta * 10.0)
 
-        # 4. Dense Reward Assembly — Split for Multi-Discount GAE
-        r_traj   = 10.0 * progress_delta        # Long horizon: progress toward goal
-        r_cruise = 1.0 * safety_penalty - 0.01  # Short horizon: safety + time penalty
-
-        # Store components so base_env can pass them through infos
-        self.last_r_traj   = r_traj
-        self.last_r_cruise = r_cruise
-
-        return r_cruise + r_traj  # Single scalar — SB3 interface unchanged
+        # 4. Dense Reward Assembly
+        return (
+            10.0 * progress_delta     # reward for moving towards goal
+            + 1.0 * safety_penalty     # Penalty for crossing intersection unsafely
+            - 0.01                     # Time penalty
+        )
 
     def additional_command(self):
         """
