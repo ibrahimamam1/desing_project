@@ -362,8 +362,14 @@ class AlphaEnv_v01(Env_N):
             return 0.0
 
         # 1. Sparse Terminal Rewards
-        if fail:           return -10.0
-        if goal_reached:   return 15.0
+        # if fail:           return -10.0  # REMOVED: replaced with reward split below
+        # if goal_reached:   return 15.0   # REMOVED: replaced with reward split below
+        if fail:
+            self.last_r_traj, self.last_r_cruise = 0.0, -10.0
+            return -10.0
+        if goal_reached:
+            self.last_r_traj, self.last_r_cruise = 15.0, 0.0
+            return 15.0
 
         obs_info = getattr(self, 'last_neighbors_info', [])
 
@@ -390,12 +396,21 @@ class AlphaEnv_v01(Env_N):
                 # Exponential penalty: spikes hard as d_eta approaches 0
                 safety_penalty += -np.exp(-abs_d_eta * 10.0)
 
-        # 4. Dense Reward Assembly
-        return (
-            10.0 * progress_delta     # reward for moving towards goal
-            + 1.0 * safety_penalty     # Penalty for crossing intersection unsafely
-            - 0.01                     # Time penalty
-        )
+        # 4. Dense Reward Assembly — Split for Multi-Discount GAE
+        # REMOVED: single return block below
+        # return (
+        #     10.0 * progress_delta     # reward for moving towards goal
+        #     + 1.0 * safety_penalty     # Penalty for crossing intersection unsafely
+        #     - 0.01                     # Time penalty
+        # )
+        r_traj   = 10.0 * progress_delta        # Long horizon: progress toward goal
+        r_cruise = 1.0 * safety_penalty - 0.01  # Short horizon: safety + time penalty
+
+        # Store components so base_env can pass them through infos
+        self.last_r_traj   = r_traj
+        self.last_r_cruise = r_cruise
+
+        return r_cruise + r_traj  # Single scalar — SB3 interface unchanged
 
     def _build_conflict_map(self):
         """
