@@ -20,7 +20,7 @@ from flow.core.params import (
     EnvParams, SumoParams, SumoCarFollowingParams, InFlows,
 )
 from flow.controllers import RLController, IDMController
-from src.utils.plot_train_curves import plot_results
+#from src.utils.plot_train_curves import plot_results
 
 # ---------------------------------------------
 # SB3 Imports
