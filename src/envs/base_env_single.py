@@ -37,8 +37,8 @@ class Env_N(gym.Env, metaclass=ABCMeta):
                  scenario=None,
                  render_mode=None
                  ):
-        
-        self.agent_id = None 
+
+        self.agent_id = None
         self.env_params = env_params
         if scenario is not None:
             deprecated_attribute(self, "scenario", "network")
@@ -46,14 +46,14 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         self.net_params = self.network.net_params
         self.initial_config = self.network.initial_config
         self.sim_params = deepcopy(sim_params)
-        
+
         # Rendering setup
         self.should_render = self.sim_params.render
-        self.sim_params.render = False 
-        
+        self.sim_params.render = False
+
         # Unique port generation to prevent collisions during parallel training
         self.sim_params.port = sumolib.miscutils.getFreeSocketPort()
-        
+
         self.time_counter = 0
         self.step_counter = 0
         self.step_counter_within_rl_step = 0
@@ -71,10 +71,10 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         self.k = Kernel(simulator=self.simulator, sim_params=self.sim_params)
         self.k.network.generate_network(self.network)
         self.k.vehicle.initialize(deepcopy(self.network.vehicles))
-        
+
         kernel_api = self.k.simulation.start_simulation(
             network=self.k.network, sim_params=self.sim_params)
-        
+
         self.k.pass_api(kernel_api)
         self.available_routes = self.k.network.rts
         self.initial_ids = deepcopy(self.network.vehicles.ids)
@@ -94,7 +94,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         self.k.junction.master_kernel = self.k
 
         self.setup_initial_state()
-        
+
         self.internal_connections = {
             ('E#D-X', 'E#X-R'): ':X_6',
             ('E#D-X', 'E#X-T'): ':X_7',
@@ -135,7 +135,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
             os.makedirs(self.path, exist_ok=True)
         else:
              raise FatalFlowError('Mode %s is not supported!' % self.sim_params.render)
-        
+
         atexit.register(self.terminate)
 
     def restart_simulation(self, sim_params, render=None):
@@ -164,9 +164,9 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         position = self.k.vehicle.get_2d_position(veh_id)
         in_box_x = -12 <= position[0] <= 12
         in_box_y = -12 <= position[1] <= 12
-            
+
         return in_box_x and in_box_y
-             
+
     # --- TELEMETRY HELPERS ---
     def _init_telemetry(self):
         """Resets telemetry storage for a new episode (Agent Only)."""
@@ -191,7 +191,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         Updates internal accumulators for the specific RL agent only.
         """
         current_time = self.time_counter
-        
+
         # If agent hasn't spawned or is already gone, do nothing
         if self.agent_id is None:
             return
@@ -205,7 +205,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
             # 2. Get Agent Physics
             speed = self.k.vehicle.get_speed(self.agent_id)
             accel = self.k.vehicle.get_accel(self.agent_id)
-            
+
             # 3. Update Stats
             if speed is not None:
                 self.telemetry["agent_speeds"].append(speed)
@@ -230,7 +230,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         Called only when terminated is True.
         """
         import numpy as np
-        
+
         # Calculate Averages
         avg_speed = np.mean(self.telemetry["agent_speeds"]) if self.telemetry["agent_speeds"] else 0.0
         avg_accel = np.mean(self.telemetry["agent_accelerations"]) if self.telemetry["agent_accelerations"] else 0.0
@@ -239,7 +239,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         spawn_time = self.telemetry["agent_spawn_time"]
         # If finish time wasn't set (e.g. timeout), use current time
         finish_time = self.telemetry["agent_finish_time"] if self.telemetry["agent_finish_time"] else self.time_counter
-        
+
         duration = 0.0
         if spawn_time is not None:
             duration = finish_time - spawn_time
@@ -258,51 +258,51 @@ class Env_N(gym.Env, metaclass=ABCMeta):
             "reward_action": self.telemetry["reward_action_total"],
             "reward_terminal": self.telemetry["reward_terminal_total"]
         }
-    
+
     def step(self, action):
         """
         Advance the environment by one step.
         """
         self.step_counter_within_rl_step = 0
-        
+
         # Snapshot of agents before step
         sorted_ids = set(self.sorted_ids)
         if self.agent_id in sorted_ids:
-            self.apply_rl_actions(action) 
+            self.apply_rl_actions(action)
         if hasattr(self, "additional_command"):
             self.additional_command()
-        
+
         # 2. Simulation Step (Inner Loop)
         for inner_step in range(self.env_params.sims_per_step):
             self.time_counter += self.sim_step
             self.step_counter += 1
             self.step_counter_within_rl_step = inner_step
-            
+
             self._apply_non_rl_controls()
-                
+
             # Advance Simulator
             self.k.simulation.simulation_step()
             self.k.update(reset=False)
-            
+
             self._update_telemetry_step()
-            
+
             if self.sim_params.render:
                 self.k.vehicle.update_vehicle_colors()
-       
-        
+
+
         # 3. Retrieve Observations
         obs = self.get_state()
         colliding_ids = set(self.k.kernel_api.simulation.getCollidingVehiclesIDList())
         rl_ids_set = set(self.k.vehicle.get_rl_ids())
         rl_crash_ids = colliding_ids & rl_ids_set  # Only RL vehicles that actually crashed
-        
+
         crashed = self.agent_id in rl_crash_ids
         goal_reached = (self.agent_id not in self.sorted_ids) and not crashed  #agent spawned then left
         truncated = (self.time_counter >= self.env_params.horizon)
-       
+
         # Only terminate if an RL agent crashed OR successfully arrived
         terminated = crashed or goal_reached
-        
+
         # Update agent-only telemetry flags
         if goal_reached:
            self.telemetry["agent_success"] = True
@@ -310,18 +310,31 @@ class Env_N(gym.Env, metaclass=ABCMeta):
                 self.telemetry["agent_finish_time"] = self.time_counter
         if crashed:
             self.telemetry["agent_collision"] = True
-        
+
         reward = self.compute_reward(self.agent_id, crashed, goal_reached, current_action=action)
-        
+
         # --- COMPUTE TELEMETRY ---
         telemetry_stats = None
         if (terminated or truncated):
             telemetry_stats = self._compute_telemetry_stats()
-        
+
         infos = {}
         if telemetry_stats is not None:
             infos["telemetry"] = telemetry_stats
-        infos["neighbors"] = self.last_neighbors_info 
+        infos["neighbors"] = self.last_neighbors_info
+
+        # --- Lagrangian Safety: constraint cost Ct ---
+        # Added for v03 (LagrangianPPO) only.
+        # v01 and v02 never read infos["Ct"] — zero effect on their training.
+        c1, c2, tau_crit = 1.0, 5.0, 0.2
+        Ct = 0.0
+        for neighbor in self.last_neighbors_info:
+            if abs(neighbor.get("d_eta", float("inf"))) < tau_crit:
+                Ct += c1
+        if crashed:
+            Ct += c2
+        infos["Ct"] = Ct
+
         return obs, reward, terminated, truncated, infos
 
     def _apply_non_rl_controls(self):
@@ -352,7 +365,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
 
         # Call parent reset (if using gymnasium.Env, though Env_N inherits directly from gym.Env)
         super().reset(seed=seed)
-        
+
         self.last_action = 0.0
         self.last_progress = 0.0
         self.last_neighbors_info = []
@@ -378,7 +391,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
                 self.sim_params.seed = seed
             else:
                 self.sim_params.seed = random.randint(0, 100000)
-            
+
             self.k.vehicle = deepcopy(self.initial_vehicles)
             self.k.vehicle.master_kernel = self.k
             self.k.junction = deepcopy(self.initial_junction)
@@ -409,11 +422,11 @@ class Env_N(gym.Env, metaclass=ABCMeta):
 
         self.k.simulation.simulation_step()
         self.k.update(reset=True)
-        
+
         if self.sim_params.render:
             self.k.vehicle.update_vehicle_colors()
-        
-        
+
+
         while not self.k.vehicle.get_rl_ids():
             self._apply_non_rl_controls()
             self.k.simulation.simulation_step()
@@ -423,49 +436,49 @@ class Env_N(gym.Env, metaclass=ABCMeta):
 
         # Now that the agent exists, grab the FIRST real observation
         rl_ids = self.k.vehicle.get_rl_ids()
-        self.agent_id = rl_ids[0]  
+        self.agent_id = rl_ids[0]
         self.rl_agent_spawned = True
         self.k.vehicle.set_color(self.agent_id, (255, 0, 0))
-            
+
         obs = self.get_state()
         return obs, {}
-    
+
 
     def _get_vehicle_polyline(self, veh_id):
         """
-        Builds a continuous Shapely LineString of the vehicle's future path, 
+        Builds a continuous Shapely LineString of the vehicle's future path,
         stitching the gap across the junction using known internal connections.
         """
         current_edge = self.k.vehicle.get_edge(veh_id)
         route = self.k.vehicle.get_route(veh_id)
         pos = self.k.vehicle.get_position(veh_id)
-     
+
         # 1. Start with the current edge's shape
-        # Note: If Flow complains about missing shapes, you may need to append '_0' 
+        # Note: If Flow complains about missing shapes, you may need to append '_0'
         # to target the specific lane, e.g., self.k.network.get_edge_shape(f"{current_edge}_0")
         coords = list(self.k.kernel_api.lane.getShape(current_edge + "_0"))
-     
+
         # 2. Check if we need to stitch the intersection gap
         if not current_edge.startswith(':'):
             try:
                 current_idx = route.index(current_edge)
                 if current_idx + 1 < len(route):
                     next_edge = route[current_idx + 1]
-                    
+
                     # 3. Lookup the internal edge from our dictionary
                     internal_edge = self.internal_connections.get((current_edge, next_edge))
-                    
+
                     if internal_edge:
-                        # Fetch internal junction shape. Append '_0' to target the lane 
+                        # Fetch internal junction shape. Append '_0' to target the lane
                         # if Flow's wrapper requires lane IDs instead of edge IDs.
-                        internal_lane = f"{internal_edge}_0" 
+                        internal_lane = f"{internal_edge}_0"
                         coords.extend(self.k.kernel_api.lane.getShape(internal_lane))
-                    
+
                     # 4. Add the next macro edge's shape
                     coords.extend(self.k.kernel_api.lane.getShape(next_edge + "_0"))
             except ValueError:
                 pass # Vehicle is likely at the very end of its route
-                
+
         # Handle the case where the vehicle is already inside the intersection (on an internal edge)
         elif current_edge.startswith(':'):
             try:
@@ -475,20 +488,20 @@ class Env_N(gym.Env, metaclass=ABCMeta):
                     coords.extend(self.k.kernel_api.lane.getShape(next_edge + "_0"))
             except IndexError:
                 pass
-    
+
         # Fallback to avoid Shapely crashing on single-coordinate lines
         if len(coords) < 2:
             x, y = self.k.vehicle.get_2d_position(veh_id)
             # Create a tiny arbitrary line indicating a stopped/lost vehicle
             return LineString([(x, y), (x+0.1, y+0.1)]), pos
-            
-        return LineString(coords), pos 
+
+        return LineString(coords), pos
 
     @property
     def sorted_ids(self):
-        """Sort the vehicle ids of vehicles in the network by position.""" 
+        """Sort the vehicle ids of vehicles in the network by position."""
         return self.k.vehicle.get_rl_ids()
-    
+
     def apply_rl_actions(self, action):
         self._apply_rl_actions(action)
 
@@ -533,7 +546,7 @@ class Env_N(gym.Env, metaclass=ABCMeta):
 
     def additional_command(self):
         pass
-    
+
     def terminate(self):
         try:
             self.k.close()
@@ -636,5 +649,3 @@ class Env_N(gym.Env, metaclass=ABCMeta):
             sight = self.renderer.get_sight(
                 orientation, id)
             self.sights.append(sight)
-
-
