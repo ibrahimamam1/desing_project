@@ -9,20 +9,21 @@ class AttentionFeatureExtractor(BaseFeaturesExtractor):
     Cross-attention feature extractor for multi-agent intersection control.
     """
     def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256, 
-                 ego_features: int = 4, neighbor_features: int = 5, max_neighbors: int = 8, 
+                 ego_features: int = 4, leader_features: int = 3, neighbor_features: int = 5, max_neighbors: int = 8, 
                  embed_dim: int = 64, num_heads: int = 4):
         
         # Initialize the base class with the expected output dimension
         super().__init__(observation_space, features_dim)
 
         self.ego_features = ego_features
+        self.leader_features = leader_features
         self.neighbor_features = neighbor_features
         self.max_neighbors = max_neighbors
         self.embed_dim = embed_dim
 
         # --- Encoders ---
         self.ego_encoder = nn.Sequential(
-            nn.Linear(self.ego_features, self.embed_dim),
+            nn.Linear(self.ego_features + self.leader_features, self.embed_dim),
             nn.LayerNorm(self.embed_dim), 
             nn.ReLU(),
         )
@@ -53,7 +54,7 @@ class AttentionFeatureExtractor(BaseFeaturesExtractor):
         obs = observations.float()
         
         # --- 1. Split observation ---
-        ego_end = self.ego_features
+        ego_end = self.ego_features + self.leader_features
         neighbor_end = ego_end + (self.max_neighbors * self.neighbor_features)
         
         ego_raw = obs[:, :ego_end]                         

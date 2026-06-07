@@ -257,6 +257,7 @@ def train():
             features_extractor_kwargs=dict(
                 features_dim=256,
                 ego_features=4,
+                leader_features=3,
                 neighbor_features=5,
                 max_neighbors=5,
                 embed_dim=64,

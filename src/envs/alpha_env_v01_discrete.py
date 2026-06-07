@@ -73,6 +73,7 @@ class AlphaEnv_v01_Discrete(AlphaEnv_v01):
 
         # 3. Safety Penalty (Using your existing d_eta)
         safety_penalty = 0.0
+        # A. Crossing conflicts
         for n in obs_info:
             # n['d_eta'] is normalized [-1, 1]. Close to 0 is highly dangerous.
             # We take the absolute value, so 0 is a crash, 1 is perfectly safe.
@@ -82,6 +83,13 @@ class AlphaEnv_v01_Discrete(AlphaEnv_v01):
             if abs_d_eta < 0.2:
                 # Exponential penalty: spikes hard as d_eta approaches 0
                 safety_penalty += -np.exp(-abs_d_eta * 10.0)
+
+        # B. Car-following safety penalty
+        leader_info = getattr(self, 'last_leader_info', {})
+        if leader_info.get('has_leader', False):
+            abs_ttc = leader_info['ttc_norm']
+            if abs_ttc < 0.2:
+                safety_penalty += -np.exp(-abs_ttc * 10.0)
 
         # 4. Dense Reward Assembly
         return (

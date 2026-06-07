@@ -33,7 +33,8 @@ class AlphaEnv_v01_Attention(Env_N):
             shape=(1, ),
             dtype=np.float32)
 
-        total_obs_len = self.ego_obs_features + (self.neighbour_obs_features * self.max_neighbours) + self.max_neighbours
+        self.leader_obs_features = 3
+        total_obs_len = self.ego_obs_features + self.leader_obs_features + (self.neighbour_obs_features * self.max_neighbours) + self.max_neighbours
         self.observation_space = Box(
             low=-1.0,
             high=1.0,
@@ -81,6 +82,7 @@ class AlphaEnv_v01_Attention(Env_N):
         obs_vector = [dis_to_goal_norm, ego_speed_norm, ego_sin, ego_cos]
 
         # --- 2. Neighbor States (Frenet-based) ---
+        car_following_vehicles = []
         neighbors_info = []
         all_ids = self.k.vehicle.get_ids()
 
@@ -108,7 +110,6 @@ class AlphaEnv_v01_Attention(Env_N):
             other_speed = self.k.vehicle.get_speed(other_id)
             if other_speed is None or other_speed < 0:
                 other_speed = 0.0
-            other_speed_norm = np.clip(other_speed / max_speed, 0.0, 1.0)
 
             # Neighbor heading
             other_heading = self.k.vehicle.get_heading(other_id)
@@ -116,14 +117,7 @@ class AlphaEnv_v01_Attention(Env_N):
             other_sin = np.sin(other_angle_rad)
             other_cos = np.cos(other_angle_rad)
 
-             # Normalise dist_to_cp
             edge = self.k.vehicle.get_edge(other_id)
-
-            #rel_speed = ego_speed - other_speed
-
-            # 2. TTC (Time to Collision)
-            #ttc = ego_dist_to_cp / max(rel_speed, 1e-3) if rel_speed > 0 else np.inf
-            #ttc_norm = ttc_norm = 1.0 - np.exp(-ttc / 3.0)  # Normalize to a 10s horizon
 
             ego_line, ego_pos_on_edge = self._get_vehicle_polyline(ego_id)
             other_line, other_pos_on_edge = self._get_vehicle_polyline(other_id)
@@ -143,6 +137,8 @@ class AlphaEnv_v01_Attention(Env_N):
             other_point = Point(other_x, other_y)
             geom_type = intersection.geom_type
 
+            is_car_following_ahead = False
+
             if geom_type in ['Point', 'MultiPoint']:
                 if geom_type == 'MultiPoint':
                     # Find the first point of contact along each vehicle's respective path
@@ -156,7 +152,6 @@ class AlphaEnv_v01_Attention(Env_N):
                 ego_dist_to_cp = max(0.0, ego_proj - ego_pos_on_edge)
                 other_dist_to_cp = max(0.0, other_proj - other_pos_on_edge)
 
-
             # Case B: Paths overlap (Car-Following or Merging)
             elif geom_type in ['LineString', 'MultiLineString', 'GeometryCollection']:
                 is_car_following = False
@@ -167,6 +162,7 @@ class AlphaEnv_v01_Attention(Env_N):
                     other_proj = ego_line.project(other_point)
                     if other_proj >= ego_pos_on_edge:
                         ego_dist_to_cp = max(0.0, other_proj - ego_pos_on_edge)
+                        is_car_following_ahead = True
                     else:
                         other_dist_to_cp = max(0.0, ego_pos_on_edge - other_proj)
                     is_car_following = True
@@ -178,7 +174,13 @@ class AlphaEnv_v01_Attention(Env_N):
                         other_dist_to_cp = max(0.0, ego_proj - other_pos_on_edge)
                     else:
                         ego_dist_to_cp = max(0.0, other_pos_on_edge - ego_proj)
+                        is_car_following_ahead = True
                     is_car_following = True
+
+                if is_car_following:
+                    if is_car_following_ahead:
+                        car_following_vehicles.append((other_id, distance, other_speed))
+                    continue
 
                 # 3. Merging (Vehicles are on different unshared branches approaching the overlap)
                 if not is_car_following:
@@ -212,6 +214,34 @@ class AlphaEnv_v01_Attention(Env_N):
                     'edge':     edge,
                     'distance': distance,
                 })
+
+        # Identify the closest leader
+        if car_following_vehicles:
+            car_following_vehicles.sort(key=lambda x: x[1])
+            closest_leader = car_following_vehicles[0]
+            leader_id, leader_dist, leader_speed = closest_leader
+
+            gap_norm = np.clip(leader_dist / self.perception_radius, 0.0, 1.0)
+            leader_speed_norm = np.clip(leader_speed / max_speed, 0.0, 1.0)
+
+            rel_speed = ego_speed - leader_speed
+            if rel_speed > 0:
+                ttc = leader_dist / rel_speed
+                ttc_norm = 1.0 - np.exp(-ttc / 3.0)
+            else:
+                ttc_norm = 1.0
+        else:
+            gap_norm, leader_speed_norm, ttc_norm = 1.0, 1.0, 1.0
+
+        self.last_leader_info = {
+            'has_leader': len(car_following_vehicles) > 0,
+            'gap_norm': gap_norm,
+            'leader_speed_norm': leader_speed_norm,
+            'ttc_norm': ttc_norm
+        }
+
+        # Extend obs_vector with leader features: gap, leader_speed, ttc
+        obs_vector.extend([gap_norm, leader_speed_norm, ttc_norm])
 
         # Sort by physical distance (closest first), take top k
         neighbors_info.sort(key=lambda n: n['distance'])
@@ -291,12 +321,20 @@ class AlphaEnv_v01_Attention(Env_N):
 
         # 3. Safety Penalty
         safety_penalty = 0.0
+        # A. Crossing conflicts
         for n in obs_info:
             abs_d_eta = abs(n['d_eta'])
             # Only penalize if they are projected to arrive within a tight window of each other
             if abs_d_eta < 0.2:
                 # Exponential penalty: spikes hard as d_eta approaches 0
                 safety_penalty += -np.exp(-abs_d_eta * 10.0)
+
+        # B. Car-following safety penalty
+        leader_info = getattr(self, 'last_leader_info', {})
+        if leader_info.get('has_leader', False):
+            abs_ttc = leader_info['ttc_norm']
+            if abs_ttc < 0.2:
+                safety_penalty += -np.exp(-abs_ttc * 10.0)
 
         # 4. Dense Reward Assembly
         return (

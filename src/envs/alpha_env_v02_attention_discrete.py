@@ -5,7 +5,7 @@ import numpy as np
 import sys
 import os
 sys.path.append(os.path.dirname(__file__))
-from alpha_env_v01_attention_continous import AlphaEnv_v01_Attention
+from alpha_env_v02_attention_continous import AlphaEnv_v01_Attention
 class AlphaEnv_v01_AttentionDiscrete(AlphaEnv_v01_Attention):
     """
     Same as AlphaEnv_v01_Attention but with a discrete action space.
@@ -67,10 +67,18 @@ class AlphaEnv_v01_AttentionDiscrete(AlphaEnv_v01_Attention):
 
         # 3. Safety Penalty
         safety_penalty = 0.0
+        # A. Crossing conflicts
         for n in obs_info:
             abs_d_eta = abs(n['d_eta'])
             if abs_d_eta < 0.2:
                 safety_penalty += -np.exp(-abs_d_eta * 10.0)
+
+        # B. Car-following safety penalty
+        leader_info = getattr(self, 'last_leader_info', {})
+        if leader_info.get('has_leader', False):
+            abs_ttc = leader_info['ttc_norm']
+            if abs_ttc < 0.2:
+                safety_penalty += -np.exp(-abs_ttc * 10.0)
 
         # 4. Dense Reward Assembly — Split for Multi-Discount GAE
         r_traj   = 10.0 * progress_delta        # Long horizon: progress toward goal

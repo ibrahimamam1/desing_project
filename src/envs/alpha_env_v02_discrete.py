@@ -5,7 +5,7 @@ import numpy as np
 import sys
 import os
 sys.path.append(os.path.dirname(__file__))
-from alpha_env_v01 import AlphaEnv_v01
+from alpha_env_v02 import AlphaEnv_v01
 class AlphaEnv_v01_Discrete(AlphaEnv_v01):
     """
     Same as AlphaEnv_v01 but with a discrete action space.
@@ -66,8 +66,9 @@ class AlphaEnv_v01_Discrete(AlphaEnv_v01):
         progress_delta = progress_norm - self.last_progress
         self.last_progress = progress_norm
 
-        # 3. Safety Penalty (Using your existing d_eta)
+        # 3. Safety Penalty
         safety_penalty = 0.0
+        # A. Crossing conflicts
         for n in obs_info:
             # n['d_eta'] is normalized [-1, 1]. Close to 0 is highly dangerous.
             # We take the absolute value, so 0 is a crash, 1 is perfectly safe.
@@ -77,6 +78,13 @@ class AlphaEnv_v01_Discrete(AlphaEnv_v01):
             if abs_d_eta < 0.2:
                 # Exponential penalty: spikes hard as d_eta approaches 0
                 safety_penalty += -np.exp(-abs_d_eta * 10.0)
+
+        # B. Car-following safety penalty
+        leader_info = getattr(self, 'last_leader_info', {})
+        if leader_info.get('has_leader', False):
+            abs_ttc = leader_info['ttc_norm']
+            if abs_ttc < 0.2:
+                safety_penalty += -np.exp(-abs_ttc * 10.0)
 
         # 4. Dense Reward Assembly — Split for Multi-Discount GAE
         r_traj   = 10.0 * progress_delta        # Long horizon: progress toward goal
