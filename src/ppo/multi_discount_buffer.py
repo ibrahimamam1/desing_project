@@ -142,5 +142,25 @@ class MultiDiscountRolloutBuffer(RolloutBuffer):
         # --- Combine: Â_t = w1 * Â_cruise + w2 * Â_traj ---
         self.advantages = self.w1 * advantages_cruise + self.w2 * advantages_traj
 
-        # Returns used for value loss — use combined advantage + values
-        self.returns = self.advantages + self.values
+        # --- Returns for value function — computed from total reward with gamma2 (consistent) ---
+        total_rewards = self.rewards_cruise + self.rewards_traj
+        last_gae_combined = 0
+        advantages_combined = np.zeros_like(total_rewards)
+        for step in reversed(range(self.buffer_size)):
+            if step == self.buffer_size - 1:
+                next_non_terminal = 1.0 - dones
+                next_values = last_values
+            else:
+                next_non_terminal = 1.0 - self.episode_starts[step + 1]
+                next_values = self.values[step + 1]
+            delta = (
+                total_rewards[step]
+                + self.gamma2 * next_values * next_non_terminal
+                - self.values[step]
+            )
+            last_gae_combined = (
+                delta
+                + self.gamma2 * self.lambda2 * next_non_terminal * last_gae_combined
+            )
+            advantages_combined[step] = last_gae_combined
+        self.returns = advantages_combined + self.values
