@@ -1,0 +1,207 @@
+
+
+## Multi-Discount GAE Implementation Notes
+
+### Problem Statement
+
+Standard PPO uses a single discount factor gamma for all reward components. In Autonomous Intersection Management, the reward has two fundamentally different time scales that a single gamma cannot optimally handle simultaneously.
+
+---
+
+### Theoretical Basis
+
+Two time scales exist in AIM (thesis page 18):
+
+**Short horizon** — safety, TTC avoidance (~2 seconds). Needs low gamma so the agent reacts immediately to danger.
+
+**Long horizon** — efficient arrival, progress toward goal. Needs high gamma so the agent plans far ahead.
+
+The paper proposes computing two separate GAE advantages — one on r_cruise with (γ1, λ1), one on r_traj with (γ2, λ2) — then combining them as a weighted sum before the PPO update.
+
+---
+
+### What We Found in the Existing Code
+
+**Stack:** SUMO via TraCI as the simulator, Stable Baselines3 PPO as the RL library (not RLlib as initially assumed), and SubprocVecEnv with 8 parallel workers.
+
+**Class hierarchy:** Env_N is the base. AlphaEnv_v01 inherits from it, and AlphaEnv_v01_Discrete inherits from that. Separately, AlphaEnv_v01_Attention inherits from Env_N, with AlphaEnv_v01_AttentionDiscrete below it.
+
+**Existing reward function** — found identically across all environment files:
+
+```python
+return (
+    10.0 * progress_delta
+    + 1.0 * safety_penalty
+    - 0.01
+)
+```
+
+One combined scalar — no separation between components.
+
+**Existing GAE** — single loop in SB3's buffers.py with gamma=0.98 applied to everything. One gamma, one lambda — a compromise between safety and progress, suboptimal for both.
+
+**Reward flow:** compute_reward() → base step() → SubprocVecEnv → RolloutBuffer → GAE → PPO update. The infos dict was already being used to pass neighbors and telemetry, making it a natural side channel for reward components.
+
+---
+
+### Strategy: Match Existing, Add New
+
+The core challenge was that SB3 is a closed library — it expects a scalar reward and handles GAE internally. We couldn't modify SB3 directly, so we used a layered approach.
+
+**Layer 1 — Environment (minimal change).** The reward math stays identical. We only added labeling — r_traj and r_cruise are stored as instance attributes, and the return value remains r_cruise + r_traj, identical to before. SB3 never knows anything changed.
+
+**Layer 2 — Info dict as side channel.** SubprocVecEnv passes infos through unchanged. We added two keys: infos["r_traj"] and infos["r_cruise"].
+
+**Layer 3 — Custom buffer (subclass, not modify).** MultiDiscountRolloutBuffer subclasses RolloutBuffer, adds two extra arrays for the reward components, and overrides only compute_returns_and_advantage(). Everything else is inherited unchanged.
+
+**Layer 4 — Custom PPO (subclass, not modify).** MultiDiscountPPO subclasses PPO and overrides only collect_rollouts() — adding 4 lines after rollout_buffer.add() to extract reward components from infos and feed them into the buffer. The entire rest of the PPO training loop is inherited unchanged.
+
+**Layer 5 — Config.** The custom buffer is injected after model creation with γ1=0.90, γ2=0.99, λ1=0.90, λ2=0.95, w1=0.4, w2=0.6.
+
+---
+
+### Reward Decomposition
+
+r_traj = 10.0 × progress_delta — long horizon, reaching the goal requires far-sighted planning.
+
+r_cruise = 1.0 × safety_penalty − 0.01 — short horizon, danger must be reacted to immediately.
+
+The scalar returned to SB3 remains r_cruise + r_traj — interface unchanged.
+
+---
+
+### Hyperparameters
+
+γ1 = 0.90 — ~10 step horizon, matches ~2s safety window. γ2 = 0.99 — ~100 step horizon, matches full episode planning. λ1 = 0.90 — lower lambda, less variance for short horizon. λ2 = 0.95 — higher lambda, better long range estimate. w1 = 0.4 — weight for safety advantage. w2 = 0.6 — weight for progress advantage, slightly prioritized. These are starting values, tunable based on training results.
+
+---
+
+### Architecture Overview
+
+The environment step splits the reward into r_cruise and r_traj and stores them in the infos dict. MultiDiscountPPO.collect_rollouts() reads those components and feeds them into the buffer. MultiDiscountRolloutBuffer.compute_returns_and_advantage() runs two separate GAE loops — one with (γ1=0.90, λ1=0.90) on r_cruise, one with (γ2=0.99, λ2=0.95) on r_traj — then combines them as 0.4 × advantages_cruise + 0.6 × advantages_traj. The PPO update loop reads self.advantages (combined) and runs the standard clipped surrogate loss, unchanged.
+
+---
+
+### Files Created
+
+- src/ppo/multi_discount_buffer.py — custom rollout buffer with dual GAE
+- src/ppo/multi_discount_ppo.py — custom PPO that feeds reward components into buffer
+
+The reward decomposition was applied across all 4 environment variants, each saved as a new v02 file to preserve the original v01 files intact: alpha_env_v02_discrete.py, alpha_env_v02.py, alpha_env_v02_attention_discrete.py, alpha_env_v02_attention_continous.py.
+
+**Special case — alpha_env_v02.py (heuristic continuous):** This file is the parent class of alpha_env_v02_discrete.py. It was handled last because editing the parent's compute_reward() risked unexpected inheritance side effects on the discrete subclass. The prerequisite was confirming the teammate's fixes to the base alpha_env_v01.py were stable and pulled. Once confirmed, the identical reward decomposition pattern was applied. The discrete subclass already overrides compute_reward() independently, so no inheritance conflict occurred.
+
+---
+
+### Config Versioning
+
+v0_1_single_agent.py points to v01 env files — original baseline, preserved. v0_2_single_agent.py points to v02 env files — multi-discount GAE experiments.
+
+```bash
+python src/configs/v0_1_single_agent.py --train --version heuristic_discrete
+python src/configs/v0_2_single_agent.py --train --version heuristic_discrete
+```
+
+---
+
+### Smoke Test Results
+
+All 4 variants (heuristic_discrete, attention_discrete, attention_continous, heuristic_continuous) ran 5120 timesteps with zero crashes. Times ranged from ~33s to ~85s depending on variant.
+
+---
+
+---
+
+## v03 — Lagrangian Safety (Single Agent PPO)
+
+**Branch:** shakkhar_2.0_multi_discount_single_agent_clean — **Date:** May 14, 2026 — **Built on top of:** v02 (Multi-Discount GAE)
+
+---
+
+### What Was Built
+
+A Lagrangian safety constraint was added to single-agent PPO. The loss becomes L_PPO − λc · C(s, a). The cost signal Ct is: c1 × 1[|d_eta| < τ_crit] + c2 × 1[collision]. λc auto-adjusts every update — it increases when mean Ct > 0 (more safety pressure) and decreases when mean Ct = 0 (relax, optimize efficiency), clipped to [0, ∞). Reference: Achiam et al., 2017 (CPO) — thesis page 19-20.
+
+---
+
+### Files
+
+base_env_single.py was modified to inject Ct into infos. Three new files were created: src/ppo/lagrangian_buffer.py (stores Ct per step), src/ppo/lagrangian_ppo.py (λc logic, modified loss), and src/configs/v0_3_single_agent.py (wires everything). All v01 and v02 files are untouched.
+
+---
+
+### Architecture
+
+base_env_single.py step() computes Ct from last_neighbors_info and the crashed flag, then sets infos["Ct"]. v01 and v02 environments never read this key — zero effect on them.
+
+LagrangianPPO.collect_rollouts() reads infos["Ct"], calls rollout_buffer.add_cost(), and also reads r_cruise and r_traj (inherited from MultiDiscountPPO).
+
+LagrangianRolloutBuffer inherits dual GAE from MultiDiscountRolloutBuffer, adds a self.costs array, and exposes get_mean_cost() for the λc update.
+
+LagrangianPPO.train() calls super().train() (full standard PPO update), then adjusts λc based on mean_cost, and logs lagrangian/lambda_c and lagrangian/mean_cost to tensorboard.
+
+---
+
+### Hyperparameters
+
+c1 = 1.0 (cost per dangerous neighbor, |d_eta| < 0.2). c2 = 5.0 (cost per collision). tau_crit = 0.2 (d_eta danger threshold, validated in thesis). lambda_c = 0.1 (initial Lagrange multiplier). lambda_lr = 0.01 (λc learning rate). γ1, γ2, w1, w2, λ1, λ2 all inherited from v02.
+
+---
+
+### Key Design Decisions
+
+**Why base_env_single.py and not v02 env files:** crashed and last_neighbors_info are both in scope there. One change covers all 4 env variants automatically. v01 and v02 are unaffected — they never read infos["Ct"].
+
+**Why no separate env files (v03 variants):** Unlike v02 where the reward split required per-variant changes in compute_reward(), Ct lives in the base class. No per-variant env files needed.
+
+**Why super().train() first, then λc update:** SB3's loss computation is inside the parent's train(). Adjusting λc after and applying it on the next update is standard Lagrangian PPO practice — the one-step lag is invisible at 1.5M timesteps with lambda_lr=0.01.
+
+**SB3 never broken:** environment still returns a scalar reward, SubprocVecEnv works normally, PPO update loop is unchanged.
+
+---
+
+### Smoke Test Results
+
+5120 timesteps, zero crashes. ep_rew_mean moved from -0.07 to +0.90. lambda_c held stable at 0.1 with few violations in the short run. mean_cost = 0.01. Basic learning signal confirmed — full training to run on GPU cluster.
+
+---
+
+---
+
+## Bug Fix — Multi-Discount Buffer
+
+### What Was Broken
+
+In compute_returns_and_advantage(), the final line was:
+
+```python
+self.returns = self.advantages + self.values
+```
+
+self.advantages is a weighted combination of two GAE estimates computed with different gamma values (γ1=0.90 and γ2=0.99). Adding self.values back to this hybrid to produce self.returns is mathematically invalid — the value function was trained on the combined scalar reward, not on this weighted hybrid. The result is that self.returns becomes an inconsistent target for the value network.
+
+### What It Caused
+
+The value network trained against meaningless return targets, producing explained_variance consistently between -1.38 and -1.43 (healthy range is 0 to 1), and ep_rew_mean stuck at -6.24 with no learning signal. Confirmed empirically across multiple smoke test runs.
+
+### The Fix
+
+Replace that single line with a proper GAE loop computed from the total reward (rewards_cruise + rewards_traj) using a single consistent gamma (γ2=0.99). This gives the value network a valid, stable target. total_rewards is the exact same scalar the environment already returns to SB3, reconstructed explicitly from the stored components for clarity.
+
+### Why This Is Correct
+
+self.returns is used only for value function training — it must be consistent with what the value network learned. self.advantages — the thesis contribution — is completely untouched. The dual GAE loops and the weighted combination remain exactly as designed.
+
+### What Changed After Fix
+
+explained_variance moved from the -1.38 to -1.43 range to +0.017 to +0.587. ep_rew_mean moved from -6.24 to the -1.94 to +6.09 range. Zero overlap between distributions across all runs.
+
+### Scope
+
+The fix lives in MultiDiscountRolloutBuffer.compute_returns_and_advantage(). LagrangianRolloutBuffer (v03) does not override this method and inherits the fix automatically. v01 baseline files are untouched.
+
+---
+
+### Versioning Convention
+
+v01 files — never touch (baseline). v02 files — never touch (multi-discount GAE baseline). v03 files — Lagrangian safety experiment. If a new experiment is needed, create v04, copying from v03 or v02 as appropriate.
