@@ -293,8 +293,8 @@ def train():
         action_space=vec_env.action_space,
         device=model.device,
         n_envs=num_workers,
-        gamma1=0.90,   # short horizon gamma (safety/cruise)
-        gamma2=0.99,   # long horizon gamma (progress/traj)
+        gamma1= 0.97, #0.90,   # short horizon gamma (safety/cruise)
+        gamma2= 0.995, #0.99,   # long horizon gamma (progress/traj)
         lambda1=0.90,  # short horizon lambda
         lambda2=0.95,  # long horizon lambda
         w1=0.4,        # weight for safety advantage

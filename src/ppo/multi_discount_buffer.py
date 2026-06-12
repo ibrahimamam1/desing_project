@@ -42,8 +42,8 @@ class MultiDiscountRolloutBuffer(RolloutBuffer):
         gamma=0.99,        # kept for SB3 compatibility, not used in dual GAE
         n_envs=1,
         # --- Multi-Discount Parameters ---
-        gamma1=0.90,       # short horizon gamma (safety)
-        gamma2=0.99,       # long horizon gamma (progress)
+        gamma1= 0.97,#0.90,       # short horizon gamma (safety)
+        gamma2= 0.995,     #0.99,       # long horizon gamma (progress)
         lambda1=0.90,      # short horizon lambda
         lambda2=0.95,      # long horizon lambda
         w1=0.4,            # weight for safety advantage
@@ -69,6 +69,7 @@ class MultiDiscountRolloutBuffer(RolloutBuffer):
         # Two separate reward buffers — filled from infos dict
         self.rewards_cruise = np.zeros((buffer_size, n_envs), dtype=np.float32)
         self.rewards_traj   = np.zeros((buffer_size, n_envs), dtype=np.float32)
+
 
     def reset(self):
         """Reset all buffers including the two reward component buffers."""
