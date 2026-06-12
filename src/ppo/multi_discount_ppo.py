@@ -94,6 +94,7 @@ class MultiDiscountPPO(PPO):
             if isinstance(rollout_buffer, MultiDiscountRolloutBuffer):
                 r_cruise = np.array([info.get("r_cruise", 0.0) for info in infos], dtype=np.float32)
                 r_traj   = np.array([info.get("r_traj",   0.0) for info in infos], dtype=np.float32)
+            
                 rollout_buffer.add_reward_components(
                     pos=rollout_buffer.pos - 1,  # pos was incremented by add()
                     r_cruise=r_cruise,

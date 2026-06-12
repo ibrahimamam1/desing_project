@@ -322,6 +322,8 @@ class Env_N(gym.Env, metaclass=ABCMeta):
         if telemetry_stats is not None:
             infos["telemetry"] = telemetry_stats
         infos["neighbors"] = self.last_neighbors_info
+        infos["r_cruise"] = getattr(self, "last_r_cruise", 0.0)
+        infos["r_traj"]   = getattr(self, "last_r_traj",   0.0)
 
         # --- Lagrangian Safety: constraint cost Ct ---
         # Added for v03 (LagrangianPPO) only.
