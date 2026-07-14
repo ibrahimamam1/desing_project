@@ -29,15 +29,12 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
-
-# --- CHANGE 1 of 2: Lagrangian imports (replaces MultiDiscount imports) ---
-from src.ppo.lagrangian_buffer import LagrangianRolloutBuffer
-from src.ppo.lagrangian_ppo import LagrangianPPO
-
+from src.ppo.multi_discount_buffer import MultiDiscountRolloutBuffer
+from src.ppo.multi_discount_ppo import MultiDiscountPPO
 IDM_acceleration_controller = IDMController
 RL_vehicle_acceleration_controller = RLController
 
-myTag = "AlphaV0.3_Lagrangian_Safety"
+myTag = "AlphaV0.1_Heuristic_Discrete"
 min_gap       = 2.5
 max_accel     = 2.6
 max_decel     = 4.5
@@ -164,13 +161,13 @@ def create_flow_env(env_config):
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     if args.version == "heuristic_continuous":
-        from src.envs.alpha_env_v02 import AlphaEnv_v01 as EnvClass
+        from src.envs.alpha_env_v04 import AlphaEnv_v01 as EnvClass
     elif args.version == "heuristic_discrete":
-        from src.envs.alpha_env_v03_discrete import AlphaEnv_v01_Discrete as EnvClass
+        from src.envs.alpha_env_v04_discrete import AlphaEnv_v01_Discrete as EnvClass
     elif args.version == "attention_discrete":
-        from src.envs.alpha_env_v02_attention_discrete import AlphaEnv_v01_AttentionDiscrete as EnvClass
+        from src.envs.alpha_env_v04_attention_discrete import AlphaEnv_v01_AttentionDiscrete as EnvClass
     elif args.version == "attention_continous":
-        from src.envs.alpha_env_v02_attention_continous import AlphaEnv_v01_Attention as EnvClass
+        from src.envs.alpha_env_v04_attention_continous import AlphaEnv_v01_Attention as EnvClass
 
     params       = flow_params
     _vehicles    = deepcopy(params["veh"])
@@ -199,7 +196,7 @@ def create_flow_env(env_config):
 
 class TrafficCallback(BaseCallback):
     """
-    Custom callback for logging telemetry and Lagrangian metrics to TensorBoard.
+    Custom callback for logging telemetry metrics to TensorBoard
     """
     def __init__(self, verbose=0):
         super(TrafficCallback, self).__init__(verbose)
@@ -225,15 +222,15 @@ def linear_schedule_with_floor(initial_value: float, min_value: float):
 # ---------------------------------------------
 # Checkpoint helpers
 # ---------------------------------------------
-ENV_NAME  = "alpha_env_v02_" + args.version
-ALGO_NAME = "PPO_Lagrangian"
+ENV_NAME  = "alpha_env_v01_" + args.version
+ALGO_NAME = "PPO"
 
 CHECKPOINT_ROOT = os.path.join(
-    os.getcwd(), "checkpoints/v0_3",
+    os.getcwd(), "checkpoints/v0_1",
     f"{args.version}_{ENV_NAME}_{ALGO_NAME}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
 )
-TENSORBOARD_DIR = os.path.join(os.getcwd(), "tensorboard_logs/v0_3_", f"{args.version}")
-RUN_NAME = f"flow_ppo_lagrangian_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+TENSORBOARD_DIR = os.path.join(os.getcwd(), "tensorboard_logs/v0_1_",f"{args.version}")
+RUN_NAME = f"flow_ppo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 TENSORBOARD_RUN_DIR = os.path.join(TENSORBOARD_DIR, RUN_NAME)
 
 
@@ -242,13 +239,13 @@ from src.models.attention_model import AttentionFeatureExtractor
 def train():
     os.makedirs(CHECKPOINT_ROOT, exist_ok=True)
 
-    print(f"\n--- TRAINING START (Lagrangian Safety - SB3) ---")
+    print(f"\n--- TRAINING START (Discrete - SB3) ---")
     print(f"TensorBoard → {TENSORBOARD_RUN_DIR}")
 
-    num_workers = 2
-    n_steps = 512
+    num_workers = 8
+    n_steps = 1024
 
-    total_timesteps = 5000
+    total_timesteps = 1500000
 
     def make_env():
         return create_flow_env({"render": False})
@@ -271,8 +268,7 @@ def train():
 
     vec_env = SubprocVecEnv([make_env for _ in range(num_workers)])
 
-    # --- CHANGE 2 of 2: LagrangianPPO replaces MultiDiscountPPO ---
-    model = LagrangianPPO(
+    model = MultiDiscountPPO(
         policy="MlpPolicy",
         env=vec_env,
         policy_kwargs=policy_kwargs,
@@ -287,20 +283,18 @@ def train():
         ent_coef=0.01,
         tensorboard_log=TENSORBOARD_RUN_DIR,
         verbose=1,
-        # --- Lagrangian safety parameters ---
-        lambda_c=0.1,       # initial Lagrange multiplier — starts small
-        lambda_lr=0.01,     # how fast λc adjusts per update
     )
 
-    # --- Inject Lagrangian Rollout Buffer ---
-    model.rollout_buffer = LagrangianRolloutBuffer(
+    # --- Inject Multi-Discount Rollout Buffer ---
+    # Replace SB3's default buffer with our custom dual-GAE buffer
+    model.rollout_buffer = MultiDiscountRolloutBuffer(
         buffer_size=n_steps,
         observation_space=vec_env.observation_space,
         action_space=vec_env.action_space,
         device=model.device,
         n_envs=num_workers,
-        gamma1=0.90,   # short horizon gamma (safety/cruise)
-        gamma2=0.99,   # long horizon gamma (progress/traj)
+        gamma1= 0.97, #0.90,   # short horizon gamma (safety/cruise)
+        gamma2= 0.995, #0.99,   # long horizon gamma (progress/traj)
         lambda1=0.90,  # short horizon lambda
         lambda2=0.95,  # long horizon lambda
         w1=0.4,        # weight for safety advantage
@@ -322,17 +316,24 @@ def train():
     print(f"Saved Model  → {final_model_path}.zip")
     print(f"TensorBoard → {TENSORBOARD_RUN_DIR}")
 
+    plot_out = os.path.join(root_dir, "outputs", "train", RUN_NAME)
+    try:
+        plot_results(logdir=TENSORBOARD_RUN_DIR, output_dir=plot_out, exp_name=RUN_NAME)
+    except Exception as e:
+        print(f"Note: Could not run plot_results. Check if it's strictly compatible with RLlib tensorboard formatting. Error: {e}")
+
     vec_env.close()
 
 def _risk_bar(value, width=10):
+    """value in [0,1] where 0=dangerous, 1=safe. Returns a colored bar string."""
     filled = int((1 - value) * width)
     bar = "█" * filled + "░" * (width - filled)
     if value < 0.3:
-        color = "\033[91m"
+        color = "\033[91m"   # red
     elif value < 0.6:
-        color = "\033[93m"
+        color = "\033[93m"   # yellow
     else:
-        color = "\033[92m"
+        color = "\033[92m"   # green
     return f"{color}{bar}\033[0m"
 
 def _angle_arrow(sin_val, cos_val):
@@ -384,7 +385,7 @@ def evaluate(checkpoint_path: str, num_iterations: int = 20):
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    print(f"\n--- EVALUATION START (Lagrangian Safety - SB3) ---")
+    print(f"\n--- EVALUATION START (Discrete - SB3) ---")
     print(f"Loaded checkpoint: {checkpoint_path}")
 
     eval_env = DummyVecEnv([lambda: create_flow_env({"render": True})])

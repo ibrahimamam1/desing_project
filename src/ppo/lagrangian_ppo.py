@@ -160,9 +160,15 @@ class LagrangianPPO(MultiDiscountPPO):
     # -------------------------------------------------------------------------
     def train(self) -> None:
         """
-        Override: after the standard PPO update, adjust λc based on mean
-        rollout cost and log it for monitoring.
+        Override: apply Lagrangian penalty at the advantage level, then run
+        the standard PPO update, then adjust λc for the next iteration.
         """
+        if isinstance(self.rollout_buffer, LagrangianRolloutBuffer):
+            self.rollout_buffer.advantages = (
+                self.rollout_buffer.advantages
+                - self.lambda_c * self.rollout_buffer.cost_advantages
+            )
+
         # Run the full standard PPO update (clipping, value loss, entropy)
         super().train()
 
