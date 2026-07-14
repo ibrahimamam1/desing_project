@@ -6,3 +6,6 @@ plots/
 plots_ft/
 checkpoints/
 tensorboard_logs/
+__pycache__/
+*.pyc
+*.pyo
