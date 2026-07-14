@@ -54,8 +54,26 @@ class LagrangianRolloutBuffer(MultiDiscountRolloutBuffer):
         """
         Return mean Ct over the entire filled buffer.
         Used by LagrangianPPO.train() to update λc.
-
         Returns:
             float — scalar mean constraint cost
         """
         return float(self.costs.mean())
+
+    def compute_returns_and_advantage(self, last_values, dones) -> None:
+        # Calls the fixed v02 parent method first — self.returns and the
+        # reward-based self.advantages are computed exactly as in v02,
+        # untouched. This override only ADDS cost_advantages on top.
+        super().compute_returns_and_advantage(last_values, dones)
+
+        last_gae_cost = 0
+        advantages_cost = np.zeros_like(self.costs)
+        for step in reversed(range(self.buffer_size)):
+            if step == self.buffer_size - 1:
+                next_non_terminal = 1.0 - dones
+            else:
+                next_non_terminal = 1.0 - self.episode_starts[step + 1]
+            delta = self.costs[step]
+            last_gae_cost = delta + self.gamma1 * self.lambda1 * next_non_terminal * last_gae_cost
+            advantages_cost[step] = last_gae_cost
+
+        self.cost_advantages = advantages_cost
