@@ -164,13 +164,13 @@ def create_flow_env(env_config):
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     if args.version == "heuristic_continuous":
-        from src.envs.alpha_env_v02 import AlphaEnv_v01 as EnvClass
+        from src.envs.alpha_env_v03 import AlphaEnv_v01 as EnvClass
     elif args.version == "heuristic_discrete":
         from src.envs.alpha_env_v03_discrete import AlphaEnv_v01_Discrete as EnvClass
     elif args.version == "attention_discrete":
-        from src.envs.alpha_env_v02_attention_discrete import AlphaEnv_v01_AttentionDiscrete as EnvClass
+        from src.envs.alpha_env_v03_attention_discrete import AlphaEnv_v01_AttentionDiscrete as EnvClass
     elif args.version == "attention_continous":
-        from src.envs.alpha_env_v02_attention_continous import AlphaEnv_v01_Attention as EnvClass
+        from src.envs.alpha_env_v03_attention_continous import AlphaEnv_v01_Attention as EnvClass
 
     params       = flow_params
     _vehicles    = deepcopy(params["veh"])
@@ -248,7 +248,7 @@ def train():
     num_workers = 2
     n_steps = 512
 
-    total_timesteps = 5000
+    total_timesteps = 100000
 
     def make_env():
         return create_flow_env({"render": False})
