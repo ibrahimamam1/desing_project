@@ -1,6 +1,8 @@
 # v03 — Lagrangian Safety (Single Agent PPO)
 
 **Built on top of:** v02 (Multi-Discount GAE) — v02 files are **never modified**.
+**Coverage:** all 4 env variants (`heuristic_discrete`, `heuristic_continuous`,
+`attention_discrete`, `attention_continous`).
 
 ---
 
@@ -15,7 +17,7 @@ Ct = c1 · 1[|d_eta| < τ_crit] + c2 · 1[collision]
 
 An earlier version of this implementation computed `Ct` and `λc` correctly but never
 actually applied the penalty to the policy loss — the constraint was fully logged but had
-zero effect on training. The fixes below close that gap.
+zero effect on training. The fixes below close that gap, for all four env variants.
 
 ---
 
@@ -26,19 +28,26 @@ zero effect on training. The fixes below close that gap.
 | Modified | `src/envs/base_env_single.py` — computes `Ct`, injects into `infos` |
 | Modified | `src/ppo/lagrangian_buffer.py` — stores `Ct`, adds cost-GAE |
 | Modified | `src/ppo/lagrangian_ppo.py` — applies λc·cost penalty, then updates λc |
-| **New** | `src/envs/alpha_env_v03_discrete.py` — cancels v02's duplicate safety penalty, without touching v02 |
-| Modified | `src/configs/v0_3_single_agent.py` — points to the new v03 env class |
+| **New** | `src/envs/alpha_env_v03_discrete.py` — cancels duplicate safety penalty, `heuristic_discrete` |
+| **New** | `src/envs/alpha_env_v03.py` — cancels duplicate safety penalty, `heuristic_continuous` |
+| **New** | `src/envs/alpha_env_v03_attention_discrete.py` — cancels duplicate safety penalty, `attention_discrete` |
+| **New** | `src/envs/alpha_env_v03_attention_continous.py` — cancels duplicate safety penalty, `attention_continous` |
+| Modified | `src/configs/v0_3_single_agent.py` — points all 4 variants to their new v03 env classes |
 
-**Untouched:** all v01 files, all v02 files (`alpha_env_v02_discrete.py`, `multi_discount_ppo.py`, `multi_discount_buffer.py`), `v0_2_single_agent.py`.
+**Untouched:** all v01 files, all v02 env files (`alpha_env_v02.py`,
+`alpha_env_v02_discrete.py`, `alpha_env_v02_attention_discrete.py`,
+`alpha_env_v02_attention_continous.py`), `multi_discount_ppo.py`,
+`multi_discount_buffer.py`, `v0_2_single_agent.py`.
 
 ---
 
 ## Architecture
 
 ```
-alpha_env_v03_discrete.py   (NEW — v03 only)
-    → calls v02's compute_reward(), then cancels the crossing-conflict
-      penalty already baked into r_cruise (Ct/λc now own that signal)
+alpha_env_v03_*.py   (NEW — 4 files, one per variant, v03 only)
+    → calls the matching v02 class's compute_reward() unchanged, then
+      cancels the crossing-conflict penalty already baked into r_cruise
+      (Ct/λc now own that signal instead)
 
 base_env_single.py :: step()
     → Ct = Σ c1·1[|d_eta|<τ_crit] + c2·1[crashed]  → infos["Ct"]
@@ -71,12 +80,16 @@ scalar reward would have no effect. `self.advantages` is the exact tensor PPO's 
 surrogate loss consumes, so that's where the penalty must land. `self.returns` (value target)
 is left untouched, keeping the value function's target stable as λc drifts over training.
 
-**New env file instead of editing `alpha_env_v02_discrete.py`:** the crossing-conflict
-penalty already in v02's `compute_reward()` would double-count once `Ct`/λc also penalize
-the same `|d_eta| < 0.2` signal. Editing the v02 file directly would fix v03 but silently
-regress v02 (no compensating mechanism exists there). Instead, `alpha_env_v03_discrete.py`
-subclasses the v02 env, calls its `compute_reward()` unchanged, and mathematically cancels
-just the duplicate term — v02 stays byte-for-byte untouched and fully independent.
+**One new env file per variant, instead of editing the v02 files directly:** all four v02
+`compute_reward()` implementations independently contain the same crossing-conflict penalty
+(`|d_eta| < 0.2`). Leaving it in place would double-count once `Ct`/λc also penalize the
+same signal. Editing the v02 files directly would fix v03 but silently regress v02 — none of
+the v02 configs read `Ct`, so removing the penalty there would leave v02 with no
+compensating safety signal at all. Instead, each `alpha_env_v03_*.py` subclasses its
+matching v02 class, calls `compute_reward()` unchanged, and mathematically cancels just the
+duplicate term. All four v02 files stay byte-for-byte untouched and fully independent —
+`v0_2_single_agent.py` continues to import the original classes directly and is unaffected
+by any of this.
 
 ---
 
@@ -100,9 +113,13 @@ Watch `lagrangian/mean_cost` in TensorBoard — it should now visibly trend down
 training, since the policy has a genuine gradient incentive to reduce `Ct` for the first
 time. Pre-fix, this metric could stay flat/noisy indefinitely regardless of policy behavior.
 Previously logged smoke-test numbers (5120 steps, `lambda_c` stable at 0.1) reflect the
-broken, pre-fix pipeline and should be re-run before being treated as representative of the
-Lagrangian constraint actually working.
+broken, pre-fix pipeline and should be re-run — across all 4 variants — before being treated
+as representative of the Lagrangian constraint actually working.
 
-Note: this doc/fix set covers `heuristic_discrete` only. Other v03 variants
-(`attention_discrete`, `attention_continous`, `heuristic_continuous`) need the same
-thin-wrapper pattern (`alpha_env_v03_*.py`) repeated once each if used with v03.
+## Known Simplification (stated, not hidden)
+
+This is a reward-shaping-at-the-advantage-level approximation of CPO, not the textbook
+version with a separately trained cost-critic. Structurally faithful — penalty applied at
+the surrogate-loss level, value function untouched — but the cost-advantage itself is a
+zero-baseline discounted cost-to-go rather than a learned `Vc(s)`. Worth stating explicitly
+in any writeup that cites Achiam et al. directly.
