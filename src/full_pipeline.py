@@ -171,25 +171,24 @@ def _is_discrete(version):
     return "discrete" in version
 
 def _get_obs_dims(version):
-    if "heuristic_attention" in version:
-        return 4, 5, 5  # ego=4 (inherited from alpha_env_v01), neighbor=5, max_k=5 (but obs has 3 features per neighbor + mask)
-    # attention / shielded
-    return 4, 5, 5
+    # Observation layout for every attention variant:
+    # [ego(4)] + [leader(3)] + [neighbour(5) x 5] + [mask(5)] = 37
+    return 4, 3, 5, 5
 
 def _policy_kwargs(version):
-    if _needs_attention(version):
-        if "heuristic_attention" in version:
-            return dict(
-                features_extractor_class=AttentionFeatureExtractor,
-                features_extractor_kwargs=dict(features_dim=256, ego_features=4,
-                    neighbor_features=5, max_neighbors=5, embed_dim=64, num_heads=4),
-                net_arch=dict(pi=[256, 256], vf=[256, 256]))
-        return dict(
-            features_extractor_class=AttentionFeatureExtractor,
-            features_extractor_kwargs=dict(features_dim=256, ego_features=4,
-                neighbor_features=5, max_neighbors=5, embed_dim=64, num_heads=4),
-            net_arch=dict(pi=[256, 256], vf=[256, 256]))
-    return None
+    if not _needs_attention(version):
+        return None
+
+    ego_f, leader_f, neigh_f, max_k = _get_obs_dims(version)
+    # leader_features must be passed explicitly. The extractor slices the
+    # observation at ego_features + leader_features, so if this does not match
+    # the env the neighbour block and the mask are read from the wrong offsets.
+    return dict(
+        features_extractor_class=AttentionFeatureExtractor,
+        features_extractor_kwargs=dict(features_dim=256, ego_features=ego_f,
+            leader_features=leader_f, neighbor_features=neigh_f,
+            max_neighbors=max_k, embed_dim=64, num_heads=4),
+        net_arch=dict(pi=[256, 256], vf=[256, 256]))
 
 def lr_schedule(initial=3e-4, floor=1e-5):
     def func(progress):

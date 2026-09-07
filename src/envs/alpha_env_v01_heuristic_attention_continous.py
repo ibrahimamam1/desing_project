@@ -1,13 +1,13 @@
 #============HEURISTIC + ATTENTION VARIANT (CONTINUOUS)============
 # Uses conflict-detection heuristic to filter neighbors AND adds
 # an attention mask for the attention model.
-# Obs: [ego(2)] + [neighbor(3) × 5] + [mask(5)] = 22
+# Obs: [ego(4)] + [leader(3)] + [neighbor(5) x 5] + [mask(5)] = 37
 
 import gymnasium as gym
 from gymnasium.spaces import Box
 import numpy as np
-import sys 
-import os 
+import sys
+import os
 
 sys.path.append(os.path.dirname(__file__))
 
@@ -19,55 +19,53 @@ class AlphaEnv_v01_HeuristicAttention(AlphaEnv_v01):
     - Neighbors are filtered using the conflict map (like v01)
     - A neighbor mask is appended to observation (like attention variant)
     - The attention model uses the mask in its forward pass
-    
-    Obs = [d_norm, v_norm] + 5×[v, d, ttc] + 5×[mask]  = 22
+
+    Obs = [d_norm, v_norm, sin, cos] + [gap, leader_v, ttc]
+          + 5x[dist_to_cp, v, d_eta, sin, cos] + 5x[mask] = 37
     """
 
     def __init__(self, env_params, sim_params, network, simulator='traci'):
         super().__init__(env_params, sim_params, network, simulator)
-        
-        # Override observation space to include mask
-        total_obs_len = self.ego_obs_features + (self.neighbour_obs_features * self.max_neighbours) + self.max_neighbours
+
+        # Override observation space to include the mask. The parent layout is
+        # [ego][leader][neighbours]; the leader block must be counted here or
+        # the declared space is shorter than what _get_local_observation emits.
+        total_obs_len = (self.ego_obs_features
+                         + self.leader_obs_features
+                         + (self.neighbour_obs_features * self.max_neighbours)
+                         + self.max_neighbours)
         self.observation_space = Box(
             low=-1.0, high=1.0,
             shape=(total_obs_len, ),
             dtype=np.float32)
-        
+
         self.last_obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
 
     def _get_local_observation(self, ego_id):
-        # Get the base observation from AlphaEnv_v01 (heuristic-filtered)
-        # Parent returns (obs_array, neighbors_info) tuple
+        # Parent returns (obs_array, neighbors_info), heuristic-filtered.
         result = super()._get_local_observation(ego_id)
-        
-        # Handle both tuple return (obs, info) and plain array return
+
         if isinstance(result, tuple):
             base_obs, neighbors_info = result
         else:
-            base_obs = result
+            base_obs, neighbors_info = result, []
+
+        base_obs = np.asarray(base_obs, dtype=np.float32)
+
+        # The parent bails out with the cached observation when the ego has no
+        # valid 2D position. That cache is already mask-extended, so appending
+        # a second mask would change the shape.
+        if base_obs.shape[0] == self.observation_space.shape[0]:
+            return base_obs, neighbors_info
+
+        # Count real neighbours from the list the parent already truncated,
+        # rather than sniffing padded slots. The padding sentinel lives in the
+        # parent and has changed before; the list length cannot drift.
+        if not isinstance(neighbors_info, list):
             neighbors_info = []
-        
-        # Count actual neighbors by checking non-padded slots
-        # Base obs layout: [ego(4)] + N×[features(5)]
-        # Padded neighbors have specific default values
-        num_actual = 0
-        for i in range(self.max_neighbours):
-            start = self.ego_obs_features + i * self.neighbour_obs_features
-            if start + 2 >= len(base_obs):
-                break
-            v_val = base_obs[start]      # v
-            d_val = base_obs[start + 1]  # d
-            ttc_val = base_obs[start + 2] # ttc
-            # A real neighbor unlikely to have exactly v=0, d=1, ttc=1
-            if not (v_val == 0.0 and d_val == 1.0 and ttc_val == 1.0):
-                num_actual += 1
-            else:
-                break  # padded neighbors are at the end (sorted by distance)
-        
-        # Create mask: 1.0 for real neighbors, 0.0 for padded
-        mask = [1.0] * num_actual + [0.0] * (self.max_neighbours - num_actual)
-        
-        # Append mask to base observation
-        obs_with_mask = np.concatenate([base_obs, np.array(mask, dtype=np.float32)])
-        
-        return obs_with_mask, neighbors_info
+        num_actual = min(len(neighbors_info), self.max_neighbours)
+
+        mask = np.zeros(self.max_neighbours, dtype=np.float32)
+        mask[:num_actual] = 1.0
+
+        return np.concatenate([base_obs, mask]), neighbors_info
