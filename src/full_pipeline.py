@@ -357,7 +357,15 @@ def evaluate_version(version, model_path=None):
                     network=network, simulator="traci")
 
             collisions = 0
+            successes = 0
             travel_times = []
+            waiting_times = []
+            avg_speeds = []
+            shield_steps = 0
+            shield_overrides = 0
+            shield_ttc = 0
+            shield_rss = 0
+            shield_row = 0
 
             for ep in range(N_EVAL_EPISODES):
                 env = DummyVecEnv([make_env])
@@ -368,30 +376,58 @@ def evaluate_version(version, model_path=None):
                     obs, reward, dones, infos = env.step(action)
                     done = dones[0]
                 info = infos[0]
-                t = info.get("telemetry", {})
+                t = info.get("telemetry", {}) or {}
+
                 if t.get("agent_collision", False):
                     collisions += 1
-                tt = t.get("agent_travel_time", 0)
-                travel_times.append(tt)
+                if t.get("agent_success", False):
+                    successes += 1
+                travel_times.append(t.get("agent_travel_time", 0))
+                waiting_times.append(t.get("agent_waiting_time", 0))
+                avg_speeds.append(t.get("agent_avg_speed", 0))
+
+                # Shield counters, present only for the shielded variant.
+                # Must be read before env.close(), while the info dict is alive.
+                sh = t.get("shield_stats")
+                if sh:
+                    shield_steps += sh.get("total_steps", 0)
+                    shield_overrides += sh.get("total_overrides", 0)
+                    shield_ttc += sh.get("ttc_overrides", 0)
+                    shield_rss += sh.get("rss_overrides", 0)
+                    shield_row += sh.get("row_overrides", 0)
+
                 env.close()
                 time.sleep(1.5)  # ⏳ Allow OS to release port to prevent Address already in use crash
 
-                # Get shield stats if available
-                shield_info = {}
-                if "shield_stats" in (t or {}):
-                    shield_info = t["shield_stats"]
-
             col_rate = 100.0 * collisions / N_EVAL_EPISODES
+            success_rate = 100.0 * successes / N_EVAL_EPISODES
             avg_tt = np.mean(travel_times) if travel_times else 0
+            avg_wt = np.mean(waiting_times) if waiting_times else 0
+            avg_sp = np.mean(avg_speeds) if avg_speeds else 0
 
             row = {
                 "version": version, "intention": int_name,
                 "scenario": sc_name, "collision_rate": col_rate,
-                "avg_travel_time": avg_tt, "n_episodes": N_EVAL_EPISODES,
+                "success_rate": success_rate,
+                "avg_travel_time": avg_tt,
+                "avg_waiting_time": avg_wt,
+                "avg_speed": avg_sp,
+                "n_episodes": N_EVAL_EPISODES,
                 "collisions": collisions,
+                # Zero for every unshielded variant; only the shielded env reports these.
+                "shield_steps": shield_steps,
+                "shield_overrides": shield_overrides,
+                "shield_override_rate": (shield_overrides / shield_steps) if shield_steps else 0.0,
+                "shield_ttc_overrides": shield_ttc,
+                "shield_rss_overrides": shield_rss,
+                "shield_row_overrides": shield_row,
             }
             all_results.append(row)
-            print(f"    {int_name:20s} {sc_name:15s} → col={col_rate:5.1f}% tt={avg_tt:5.1f}s")
+            msg = (f"    {int_name:20s} {sc_name:15s} → col={col_rate:5.1f}% "
+                   f"succ={success_rate:5.1f}% tt={avg_tt:5.1f}s wait={avg_wt:5.1f}s")
+            if shield_steps:
+                msg += f" shield={100.0 * shield_overrides / shield_steps:4.1f}%"
+            print(msg)
 
     # Save CSV
     csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{version}_results.csv")
