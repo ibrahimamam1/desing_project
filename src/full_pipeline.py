@@ -12,7 +12,7 @@ Usage:
     python src/full_pipeline.py --mode plot
     python src/full_pipeline.py --mode all
 """
-import argparse, os, sys, csv, json, warnings, time, glob, random
+import argparse, os, sys, csv, json, warnings, time, glob, random, zipfile
 from copy import deepcopy
 from datetime import datetime
 
@@ -51,6 +51,11 @@ PLOT_OUTPUT_DIR = os.path.join(ROOT, "plots")
 TB_DIR = os.path.join(ROOT, "tensorboard_logs", "v0_1_full")
 
 TOTAL_TIMESTEPS = 1_500_000
+# How often to write a resumable checkpoint, in environment steps. Training
+# runs for many hours and may be interrupted by a power cut, so this bounds
+# how much progress a hard stop can cost.
+CHECKPOINT_EVERY = 25_000
+KEEP_LAST_CHECKPOINTS = 4
 NUM_WORKERS = 8
 N_EVAL_EPISODES = 42  # matches n_sims=42 in v0_1_evaluate.py
 EVAL_SEED = 42
@@ -250,23 +255,51 @@ class LogCallback(BaseCallback):
 # TRAIN
 # ═══════════════════════════════════════════════════════════════
 
+def _checkpoint_steps(path):
+    """Step count encoded in a checkpoint filename, or None if unparseable."""
+    try:
+        base = os.path.basename(path)
+        return int(base.replace("rl_model_", "").replace("_steps.zip", ""))
+    except ValueError:
+        return None
+
+def list_checkpoints(ckpt_dir):
+    """All checkpoints in the directory, newest first."""
+    found = []
+    for f in glob.glob(os.path.join(ckpt_dir, "rl_model_*_steps.zip")):
+        steps = _checkpoint_steps(f)
+        if steps is not None:
+            found.append((steps, f))
+    found.sort(reverse=True)
+    return found
+
 def get_latest_checkpoint(ckpt_dir):
-    files = glob.glob(os.path.join(ckpt_dir, "rl_model_*_steps.zip"))
-    if not files:
-        return None, 0
-    latest_file = None
-    max_steps = -1
-    for f in files:
+    """
+    Newest checkpoint that actually loads.
+
+    A checkpoint written while the machine lost power can be truncated. Walk
+    back through the saved files until one opens cleanly, so an interrupted
+    run resumes from the last good point instead of dying on a corrupt zip.
+    """
+    for steps, path in list_checkpoints(ckpt_dir):
         try:
-            basename = os.path.basename(f)
-            steps_str = basename.replace("rl_model_", "").replace("_steps.zip", "")
-            steps = int(steps_str)
-            if steps > max_steps:
-                max_steps = steps
-                latest_file = f
-        except ValueError:
+            with zipfile.ZipFile(path) as zf:
+                if zf.testzip() is not None:
+                    raise zipfile.BadZipFile("failed CRC check")
+            return path, steps
+        except (zipfile.BadZipFile, OSError) as e:
+            print(f"  [WARN] discarding unreadable checkpoint {os.path.basename(path)}: {e}")
             continue
-    return latest_file, max_steps
+    return None, 0
+
+def prune_checkpoints(ckpt_dir, keep=KEEP_LAST_CHECKPOINTS):
+    """Keep only the most recent few checkpoints so disk use stays bounded."""
+    entries = list_checkpoints(ckpt_dir)
+    for _, path in entries[keep:]:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 def train_version(version):
     # Skip if checkpoint already exists
@@ -282,6 +315,7 @@ def train_version(version):
 
     ckpt_dir = os.path.join(CHECKPOINT_BASE, version)
     os.makedirs(ckpt_dir, exist_ok=True)
+    prune_checkpoints(ckpt_dir)
 
     # Default training uses uniform_random with medium traffic
     train_rates = {"N": 275, "S": 275, "W": 275, "E": 275}
@@ -323,7 +357,7 @@ def train_version(version):
         )
 
     checkpoint_callback = CheckpointCallback(
-        save_freq=max(1, 100_000 // NUM_WORKERS),
+        save_freq=max(1, CHECKPOINT_EVERY // NUM_WORKERS),
         save_path=ckpt_dir,
         name_prefix="rl_model"
     )
@@ -337,10 +371,34 @@ def train_version(version):
     save_path = os.path.join(ckpt_dir, "final_model")
     model.save(save_path)
     vec_env.close()
+    prune_checkpoints(ckpt_dir)
 
     print(f"\n  ✅ {VERSION_LABELS[version]} done in {elapsed/60:.1f} min")
     print(f"  Saved: {save_path}.zip\n")
     return save_path + ".zip"
+
+def show_status():
+    """Per-variant training progress, so an interrupted sweep can be picked up."""
+    print(f"\n{'='*72}")
+    print(f"  TRAINING STATUS  (target {TOTAL_TIMESTEPS:,} steps per variant)")
+    print(f"{'='*72}")
+    total_done = 0
+    for v in VERSIONS:
+        ckpt_dir = os.path.join(CHECKPOINT_BASE, v)
+        final = os.path.join(ckpt_dir, "final_model.zip")
+        if os.path.exists(final):
+            print(f"  {VERSION_LABELS[v]:32s}  DONE")
+            total_done += TOTAL_TIMESTEPS
+            continue
+        _, steps = get_latest_checkpoint(ckpt_dir)
+        pct = 100.0 * steps / TOTAL_TIMESTEPS
+        bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))
+        print(f"  {VERSION_LABELS[v]:32s}  [{bar}] {steps:>9,} steps  {pct:5.1f}%")
+        total_done += steps
+    overall = 100.0 * total_done / (TOTAL_TIMESTEPS * len(VERSIONS))
+    print(f"{'-'*72}")
+    print(f"  overall: {total_done:,} / {TOTAL_TIMESTEPS * len(VERSIONS):,} steps  ({overall:.1f}%)")
+    print(f"{'='*72}\n")
 
 def train_all():
     results = {}
@@ -649,7 +707,7 @@ def plot_results():
 # ═══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["train", "eval", "plot", "all"], required=True)
+    parser.add_argument("--mode", choices=["train", "eval", "plot", "all", "status"], required=True)
     parser.add_argument("--version", default=None, help="Train/eval single version only")
     parser.add_argument("--timesteps", type=int, default=None,
                         help="Override training timesteps (for smoke tests)")
@@ -668,6 +726,10 @@ if __name__ == "__main__":
     if args.workers is not None:
         NUM_WORKERS = args.workers
         print(f"  [override] NUM_WORKERS = {NUM_WORKERS}")
+
+    if args.mode == "status":
+        show_status()
+        sys.exit(0)
 
     if args.mode in ("train", "all"):
         if args.version:
