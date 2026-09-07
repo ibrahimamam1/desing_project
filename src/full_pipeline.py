@@ -12,7 +12,7 @@ Usage:
     python src/full_pipeline.py --mode plot
     python src/full_pipeline.py --mode all
 """
-import argparse, os, sys, csv, json, warnings, time, glob
+import argparse, os, sys, csv, json, warnings, time, glob, random
 from copy import deepcopy
 from datetime import datetime
 
@@ -52,7 +52,8 @@ TB_DIR = os.path.join(ROOT, "tensorboard_logs", "v0_1_full")
 
 TOTAL_TIMESTEPS = 1_500_000
 NUM_WORKERS = 8
-N_EVAL_EPISODES = 42  # Match teammate's n_sims=42 for statistical robustness
+N_EVAL_EPISODES = 42  # matches n_sims=42 in v0_1_evaluate.py
+EVAL_SEED = 42
 
 # All 6 variants
 VERSIONS = [
@@ -80,14 +81,40 @@ INTENTIONS = {
 }
 
 # Traffic scenarios (increasing total flow)
-high, medium, low_r = 500, 300, 150
+# Rates and scenario compositions match src/test/v0_1_evaluate.py so that
+# results from this pipeline can be put beside the chapter 9 numbers.
+high, medium, low_r = 400, 275, 150
+
+# Each scenario is a list of flow compositions; one is drawn per episode,
+# as in v0_1_evaluate.py, so a scenario covers its variants rather than a
+# single fixed arrangement.
 SCENARIOS = {
-    "Sc1_All_Low":   {"N": low_r,   "S": low_r,   "W": low_r,   "E": low_r},
-    "Sc6_Mixed_ML":  {"N": medium,  "S": low_r,   "W": medium,  "E": low_r},
-    "Sc3_All_Med":   {"N": medium,  "S": medium,  "W": medium,  "E": medium},
-    "Sc4_Mixed_2H":  {"N": high,    "S": high,    "W": medium,  "E": low_r},
-    "Sc5_Mixed_1H":  {"N": high,    "S": medium,  "W": low_r,   "E": medium},
-    "Sc2_All_High":  {"N": high,    "S": high,    "W": high,    "E": high},
+    "Sc1_All_Low":   [{"N": low_r, "S": low_r, "W": low_r, "E": low_r}],
+    "Sc6_Mixed_ML":  [
+        {"N": medium, "S": medium, "W": low_r,  "E": low_r},
+        {"N": medium, "S": low_r,  "W": medium, "E": low_r},
+        {"N": low_r,  "S": low_r,  "W": medium, "E": medium},
+    ],
+    "Sc3_All_Med":   [{"N": medium, "S": medium, "W": medium, "E": medium}],
+    "Sc4_Mixed_2H":  [
+        {"N": high,  "S": high,  "W": low_r, "E": low_r},
+        {"N": low_r, "S": low_r, "W": high,  "E": high},
+        {"N": high,  "S": low_r, "W": high,  "E": low_r},
+        {"N": low_r, "S": high,  "W": low_r, "E": high},
+    ],
+    "Sc5_Mixed_1H":  [
+        {"N": high,   "S": medium, "W": medium, "E": medium},
+        {"N": medium, "S": high,   "W": medium, "E": medium},
+        {"N": medium, "S": medium, "W": high,   "E": medium},
+        {"N": medium, "S": medium, "W": medium, "E": high},
+    ],
+    "Sc2_All_High":  [
+        {"N": high,   "S": high,   "W": high,   "E": high},
+        {"N": high,   "S": high,   "W": high,   "E": medium},
+        {"N": high,   "S": high,   "W": medium, "E": high},
+        {"N": high,   "S": medium, "W": high,   "E": high},
+        {"N": medium, "S": high,   "W": high,   "E": high},
+    ],
 }
 
 DIR_MAP = {"N": "E#T-X", "E": "E#R-X", "S": "E#D-X", "W": "E#L-X"}
@@ -118,12 +145,20 @@ def _make_vehicles():
         lane_change_params=None, color="red")
     return vehicles
 
+RL_EDGE = "E#L-X"   # west approach, reserved for the RL vehicle
+
 def _make_inflow(rates):
     inflow = InFlows()
+    # Background traffic on the three approaches the agent does not spawn on.
+    # v0_1_evaluate.py leaves the RL edge clear; filling it too put NonRL cars
+    # directly ahead of and behind the agent in its own lane, which is a
+    # different problem from the one chapter 9 measures.
     for d, edge in DIR_MAP.items():
+        if edge == RL_EDGE:
+            continue
         inflow.add(veh_type="NonRL", edge=edge, probability=rates[d]/3600,
                    depart_lane=0, depart_speed=0, begin=1, color="green")
-    inflow.add(veh_type="RL", edge="E#L-X", probability=0.3,
+    inflow.add(veh_type="RL", edge=RL_EDGE, probability=0.8,
                depart_lane=0, depart_speed=0, begin=warmup_steps, color="green")
     return inflow
 
@@ -344,16 +379,22 @@ def evaluate_version(version, model_path=None):
 
     all_results = []
 
-    for int_name, int_cls in INTENTIONS.items():
-        for sc_name, rates in SCENARIOS.items():
-            fp = _make_flow_params(int_cls, rates)
+    # Fixed seed so the per-episode choice of flow composition is reproducible
+    # across reruns and across variants.
+    random.seed(EVAL_SEED)
 
-            def make_env():
-                network = fp["network"](name="Eval", vehicles=deepcopy(fp["veh"]),
-                    net_params=fp["net"], initial_config=fp["initial"],
-                    traffic_lights=TrafficLightParams())
-                return EnvClass(env_params=fp["env"], sim_params=deepcopy(fp["sim"]),
-                    network=network, simulator="traci")
+    for int_name, int_cls in INTENTIONS.items():
+        for sc_name, rate_list in SCENARIOS.items():
+
+            def make_env(_rates):
+                def _thunk():
+                    fp = _make_flow_params(int_cls, _rates)
+                    network = fp["network"](name="Eval", vehicles=deepcopy(fp["veh"]),
+                        net_params=fp["net"], initial_config=fp["initial"],
+                        traffic_lights=TrafficLightParams())
+                    return EnvClass(env_params=fp["env"], sim_params=deepcopy(fp["sim"]),
+                        network=network, simulator="traci")
+                return _thunk
 
             collisions = 0
             successes = 0
@@ -367,7 +408,8 @@ def evaluate_version(version, model_path=None):
             shield_row = 0
 
             for ep in range(N_EVAL_EPISODES):
-                env = DummyVecEnv([make_env])
+                ep_rates = random.choice(rate_list)
+                env = DummyVecEnv([make_env(ep_rates)])
                 obs = env.reset()
                 done = False
                 while not done:
