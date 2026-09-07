@@ -196,6 +196,26 @@ class AlphaEnv_v01_ShieldedAttention(AlphaEnv_v01_Attention):
 
         return base_reward
 
+    def _compute_telemetry_stats(self):
+        """
+        Adds the shield intervention counters to the episode telemetry.
+
+        The parent builds this dict when the episode terminates, which is
+        before reset() clears the counters, so the values here are the totals
+        for the episode that just finished. Without this the counters were
+        incremented all episode and then discarded, and the safety-override
+        frequency could never be reported.
+        """
+        stats = super()._compute_telemetry_stats()
+
+        steps = max(self.shield_stats['total_steps'], 1)
+        stats["shield_stats"] = dict(self.shield_stats)
+        stats["shield_override_rate"] = self.shield_stats['total_overrides'] / steps
+        stats["shield_ttc_rate"] = self.shield_stats['ttc_overrides'] / steps
+        stats["shield_rss_rate"] = self.shield_stats['rss_overrides'] / steps
+        stats["shield_row_rate"] = self.shield_stats['row_overrides'] / steps
+        return stats
+
     def reset(self, **kwargs):
         """Reset shield stats each episode."""
         self.shield_stats = {
