@@ -1,0 +1,1092 @@
+{
+  "attention_continous": [
+    {
+      "version": "attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 13.45,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 0.0,
+      "avg_travel_time": 16.425,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 0.0,
+      "avg_travel_time": 16.75,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 17.5,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.5,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 10.0,
+      "avg_travel_time": 18.975,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 10.0,
+      "avg_travel_time": 17.675,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 20.0,
+      "avg_travel_time": 18.375,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 20.0,
+      "avg_travel_time": 17.225,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 30.0,
+      "avg_travel_time": 17.85,
+      "n_episodes": 10,
+      "collisions": 3
+    },
+    {
+      "version": "attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 20.0,
+      "avg_travel_time": 16.475,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 30.0,
+      "avg_travel_time": 19.8,
+      "n_episodes": 10,
+      "collisions": 3
+    },
+    {
+      "version": "attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 14.425,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.7,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 10.0,
+      "avg_travel_time": 15.65,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 16.675,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 15.25,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 20.0,
+      "avg_travel_time": 19.8,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 12.7,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.875,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 10.0,
+      "avg_travel_time": 12.525,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 20.0,
+      "avg_travel_time": 16.55,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 14.25,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 20.0,
+      "avg_travel_time": 18.625,
+      "n_episodes": 10,
+      "collisions": 2
+    }
+  ],
+  "attention_discrete": [
+    {
+      "version": "attention_discrete",
+      "intention": "all_straight",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 12.55,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "all_straight",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 0.0,
+      "avg_travel_time": 17.95,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "all_straight",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.3,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "all_straight",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.775,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "all_straight",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 16.275,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "all_straight",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 0.0,
+      "avg_travel_time": 42.45,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "all_left",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 10.0,
+      "avg_travel_time": 14.925,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "all_left",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 20.0,
+      "avg_travel_time": 17.375,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "all_left",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 30.0,
+      "avg_travel_time": 16.5,
+      "n_episodes": 10,
+      "collisions": 3
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "all_left",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 30.0,
+      "avg_travel_time": 14.9,
+      "n_episodes": 10,
+      "collisions": 3
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "all_left",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 30.0,
+      "avg_travel_time": 15.225,
+      "n_episodes": 10,
+      "collisions": 3
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "all_left",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 20.0,
+      "avg_travel_time": 21.55,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "uniform_random",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 10.0,
+      "avg_travel_time": 14.25,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "uniform_random",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 10.0,
+      "avg_travel_time": 17.3,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "uniform_random",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 20.0,
+      "avg_travel_time": 15.825,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "uniform_random",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 28.375,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "uniform_random",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 14.4,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "uniform_random",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 10.0,
+      "avg_travel_time": 21.275,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "asymmetric_random",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 14.45,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "asymmetric_random",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 30.0,
+      "avg_travel_time": 14.225,
+      "n_episodes": 10,
+      "collisions": 3
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "asymmetric_random",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 10.0,
+      "avg_travel_time": 16.95,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "asymmetric_random",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 16.975,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "asymmetric_random",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 14.95,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "attention_discrete",
+      "intention": "asymmetric_random",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 10.0,
+      "avg_travel_time": 30.975,
+      "n_episodes": 10,
+      "collisions": 1
+    }
+  ],
+  "heuristic_attention_continous": [
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 13.125,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 10.0,
+      "avg_travel_time": 15.0,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 20.0,
+      "avg_travel_time": 13.875,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 50.0,
+      "avg_travel_time": 11.95,
+      "n_episodes": 10,
+      "collisions": 5
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 20.0,
+      "avg_travel_time": 13.475,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 40.0,
+      "avg_travel_time": 20.525,
+      "n_episodes": 10,
+      "collisions": 4
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 20.0,
+      "avg_travel_time": 12.875,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 20.0,
+      "avg_travel_time": 13.95,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 10.0,
+      "avg_travel_time": 15.375,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 20.0,
+      "avg_travel_time": 16.575,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 20.0,
+      "avg_travel_time": 13.2,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 40.0,
+      "avg_travel_time": 14.275,
+      "n_episodes": 10,
+      "collisions": 4
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 12.325,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 10.0,
+      "avg_travel_time": 13.525,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 10.0,
+      "avg_travel_time": 15.125,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 13.45,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 13.175,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 40.0,
+      "avg_travel_time": 13.675,
+      "n_episodes": 10,
+      "collisions": 4
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 12.2,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 10.0,
+      "avg_travel_time": 14.7,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 10.0,
+      "avg_travel_time": 13.225,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 13.675,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 14.25,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 10.0,
+      "avg_travel_time": 17.7,
+      "n_episodes": 10,
+      "collisions": 1
+    }
+  ],
+  "heuristic_attention_discrete": [
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "all_straight",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 10.0,
+      "avg_travel_time": 14.2,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "all_straight",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 10.0,
+      "avg_travel_time": 13.425,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "all_straight",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.15,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "all_straight",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.525,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "all_straight",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 13.675,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "all_straight",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 10.0,
+      "avg_travel_time": 20.725,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "all_left",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 13.375,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "all_left",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.925,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "all_left",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 10.0,
+      "avg_travel_time": 28.2,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "all_left",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 19.575,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "all_left",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 28.75,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "all_left",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 10.0,
+      "avg_travel_time": 21.425,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "uniform_random",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 14.25,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "uniform_random",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 10.0,
+      "avg_travel_time": 14.875,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "uniform_random",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.125,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "uniform_random",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 16.65,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "uniform_random",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 16.4,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "uniform_random",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 10.0,
+      "avg_travel_time": 38.475,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "asymmetric_random",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 10.0,
+      "avg_travel_time": 15.5,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "asymmetric_random",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.375,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "asymmetric_random",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.875,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "asymmetric_random",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 20.0,
+      "avg_travel_time": 15.875,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "asymmetric_random",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 14.325,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "heuristic_attention_discrete",
+      "intention": "asymmetric_random",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 10.0,
+      "avg_travel_time": 17.95,
+      "n_episodes": 10,
+      "collisions": 1
+    }
+  ],
+  "shielded_attention_continous": [
+    {
+      "version": "shielded_attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 14.0,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.325,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 0.0,
+      "avg_travel_time": 17.375,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 16.7,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 16.025,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "all_straight",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 10.0,
+      "avg_travel_time": 31.85,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 14.075,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 0.0,
+      "avg_travel_time": 17.225,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 10.0,
+      "avg_travel_time": 18.675,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 20.0,
+      "avg_travel_time": 18.1,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 20.0,
+      "avg_travel_time": 15.875,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "all_left",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 20.0,
+      "avg_travel_time": 19.45,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 14.0,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 10.0,
+      "avg_travel_time": 16.1,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 20.0,
+      "avg_travel_time": 26.4,
+      "n_episodes": 10,
+      "collisions": 2
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 15.25,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 40.0,
+      "avg_travel_time": 13.475,
+      "n_episodes": 10,
+      "collisions": 4
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "uniform_random",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 10.0,
+      "avg_travel_time": 18.175,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc1_All_Low",
+      "collision_rate": 0.0,
+      "avg_travel_time": 13.675,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc6_Mixed_ML",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.4,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc3_All_Med",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.15,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc4_Mixed_2H",
+      "collision_rate": 10.0,
+      "avg_travel_time": 15.275,
+      "n_episodes": 10,
+      "collisions": 1
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc5_Mixed_1H",
+      "collision_rate": 0.0,
+      "avg_travel_time": 15.85,
+      "n_episodes": 10,
+      "collisions": 0
+    },
+    {
+      "version": "shielded_attention_continous",
+      "intention": "asymmetric_random",
+      "scenario": "Sc2_All_High",
+      "collision_rate": 50.0,
+      "avg_travel_time": 14.9,
+      "n_episodes": 10,
+      "collisions": 5
+    }
+  ]
+}
