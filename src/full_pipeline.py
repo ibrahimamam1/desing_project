@@ -651,7 +651,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["train", "eval", "plot", "all"], required=True)
     parser.add_argument("--version", default=None, help="Train/eval single version only")
+    parser.add_argument("--timesteps", type=int, default=None,
+                        help="Override training timesteps (for smoke tests)")
+    parser.add_argument("--episodes", type=int, default=None,
+                        help="Override evaluation episodes per configuration")
+    parser.add_argument("--workers", type=int, default=None,
+                        help="Override number of training workers")
     args = parser.parse_args()
+
+    if args.timesteps is not None:
+        TOTAL_TIMESTEPS = args.timesteps
+        print(f"  [override] TOTAL_TIMESTEPS = {TOTAL_TIMESTEPS:,}")
+    if args.episodes is not None:
+        N_EVAL_EPISODES = args.episodes
+        print(f"  [override] N_EVAL_EPISODES = {N_EVAL_EPISODES}")
+    if args.workers is not None:
+        NUM_WORKERS = args.workers
+        print(f"  [override] NUM_WORKERS = {NUM_WORKERS}")
 
     if args.mode in ("train", "all"):
         if args.version:
