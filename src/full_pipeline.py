@@ -12,7 +12,7 @@ Usage:
     python src/full_pipeline.py --mode plot
     python src/full_pipeline.py --mode all
 """
-import argparse, os, sys, csv, json, warnings, time, glob, random, zipfile
+import argparse, os, sys, csv, json, warnings, time, glob, random, zipfile, zlib
 from copy import deepcopy
 from datetime import datetime
 
@@ -398,6 +398,26 @@ def show_status():
     overall = 100.0 * total_done / (TOTAL_TIMESTEPS * len(VERSIONS))
     print(f"{'-'*72}")
     print(f"  overall: {total_done:,} / {TOTAL_TIMESTEPS * len(VERSIONS):,} steps  ({overall:.1f}%)")
+    print(f"{'='*72}")
+
+    total_configs = len(INTENTIONS) * len(SCENARIOS)
+    print(f"\n  EVALUATION  ({total_configs} configurations per variant)")
+    print(f"{'-'*72}")
+    eval_done = 0
+    for v in VERSIONS:
+        csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{v}_results.csv")
+        if os.path.exists(csv_path):
+            print(f"  {VERSION_LABELS[v]:32s}  DONE")
+            eval_done += total_configs
+            continue
+        _, completed = load_eval_progress(v)
+        n = len(completed)
+        eval_done += n
+        bar = "#" * int(20 * n / total_configs) + "." * (20 - int(20 * n / total_configs))
+        print(f"  {VERSION_LABELS[v]:32s}  [{bar}] {n:>2}/{total_configs}")
+    ev_pct = 100.0 * eval_done / (total_configs * len(VERSIONS))
+    print(f"{'-'*72}")
+    print(f"  overall: {eval_done} / {total_configs * len(VERSIONS)} configurations  ({ev_pct:.1f}%)")
     print(f"{'='*72}\n")
 
 def train_all():
@@ -413,6 +433,60 @@ def train_all():
 # ═══════════════════════════════════════════════════════════════
 # EVALUATE
 # ═══════════════════════════════════════════════════════════════
+
+def _eval_progress_path(version):
+    return os.path.join(EVAL_OUTPUT_DIR, f"{version}_progress.jsonl")
+
+def load_eval_progress(version):
+    """
+    Configurations already evaluated for this variant.
+
+    Each finished configuration is appended as one JSON line, so an
+    interrupted run resumes at the configuration boundary instead of
+    restarting the whole variant. A line half-written when the machine lost
+    power will not parse and is dropped, costing at most one configuration.
+    """
+    path = _eval_progress_path(version)
+    rows, done = [], set()
+    if not os.path.exists(path):
+        return rows, done
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                print(f"  [WARN] dropping incomplete progress line in {os.path.basename(path)}")
+                continue
+            key = (row.get("intention"), row.get("scenario"))
+            if key in done:
+                continue
+            done.add(key)
+            rows.append(row)
+    return rows, done
+
+def append_eval_progress(version, row):
+    """Append one finished configuration, forcing it to disk before returning."""
+    os.makedirs(EVAL_OUTPUT_DIR, exist_ok=True)
+    with open(_eval_progress_path(version), "a") as f:
+        f.write(json.dumps(row) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+def _config_seed(version, int_name, sc_name):
+    """
+    Deterministic seed per configuration.
+
+    Seeding once per variant would make the flow compositions depend on how
+    many configurations ran before, so a resumed run would not reproduce an
+    uninterrupted one. Deriving the seed from the configuration itself keeps
+    the episode sequence identical either way.
+    """
+    key = f"{EVAL_SEED}|{version}|{int_name}|{sc_name}".encode()
+    return zlib.crc32(key) & 0xffffffff
+
 def evaluate_version(version, model_path=None):
     from stable_baselines3.common.vec_env import DummyVecEnv
 
@@ -435,14 +509,20 @@ def evaluate_version(version, model_path=None):
     EnvClass = _get_env_class(version)
     os.makedirs(EVAL_OUTPUT_DIR, exist_ok=True)
 
-    all_results = []
-
-    # Fixed seed so the per-episode choice of flow composition is reproducible
-    # across reruns and across variants.
-    random.seed(EVAL_SEED)
+    all_results, completed = load_eval_progress(version)
+    total_configs = len(INTENTIONS) * len(SCENARIOS)
+    if completed:
+        print(f"  resuming: {len(completed)}/{total_configs} configurations already done")
 
     for int_name, int_cls in INTENTIONS.items():
         for sc_name, rate_list in SCENARIOS.items():
+            if (int_name, sc_name) in completed:
+                print(f"    {int_name:20s} {sc_name:15s} - already done, skipping")
+                continue
+
+            # Seeded per configuration, so a resumed run draws the same flow
+            # compositions as an uninterrupted one.
+            rng = random.Random(_config_seed(version, int_name, sc_name))
 
             def make_env(_rates):
                 def _thunk():
@@ -466,7 +546,7 @@ def evaluate_version(version, model_path=None):
             shield_row = 0
 
             for ep in range(N_EVAL_EPISODES):
-                ep_rates = random.choice(rate_list)
+                ep_rates = rng.choice(rate_list)
                 env = DummyVecEnv([make_env(ep_rates)])
                 obs = env.reset()
                 done = False
@@ -522,11 +602,23 @@ def evaluate_version(version, model_path=None):
                 "shield_row_overrides": shield_row,
             }
             all_results.append(row)
+            append_eval_progress(version, row)
             msg = (f"    {int_name:20s} {sc_name:15s} → col={col_rate:5.1f}% "
                    f"succ={success_rate:5.1f}% tt={avg_tt:5.1f}s wait={avg_wt:5.1f}s")
             if shield_steps:
                 msg += f" shield={100.0 * shield_overrides / shield_steps:4.1f}%"
             print(msg)
+
+    # Resumed rows come back in whatever order they were finished, so restore
+    # the canonical intention x scenario ordering before writing.
+    _int_order = list(INTENTIONS.keys())
+    _sc_order = list(SCENARIOS.keys())
+    def _sort_key(r):
+        try:
+            return (_int_order.index(r["intention"]), _sc_order.index(r["scenario"]))
+        except ValueError:
+            return (len(_int_order), len(_sc_order))
+    all_results.sort(key=_sort_key)
 
     # Save CSV
     csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{version}_results.csv")
