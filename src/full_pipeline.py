@@ -655,7 +655,7 @@ def evaluate_version(version, model_path=None, out_name=None):
                 "shield_row_overrides": shield_row,
             }
             all_results.append(row)
-            append_eval_progress(version, row)
+            append_eval_progress(out_name, row)
             msg = (f"    {int_name:20s} {sc_name:15s} → col={col_rate:5.1f}% "
                    f"succ={success_rate:5.1f}% tt={avg_tt:5.1f}s wait={avg_wt:5.1f}s")
             if shield_steps:
