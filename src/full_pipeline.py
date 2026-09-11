@@ -519,7 +519,7 @@ def _config_seed(version, int_name, sc_name):
     key = f"{EVAL_SEED}|{version}|{int_name}|{sc_name}".encode()
     return zlib.crc32(key) & 0xffffffff
 
-def evaluate_version(version, model_path=None):
+def evaluate_version(version, model_path=None, out_name=None):
     from stable_baselines3.common.vec_env import DummyVecEnv
 
     if model_path is None:
@@ -528,9 +528,10 @@ def evaluate_version(version, model_path=None):
         print(f"  ⚠️  Checkpoint not found: {model_path}, skipping {version}")
         return
 
-    csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{version}_results.csv")
+    out_name = out_name or version
+    csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{out_name}_results.csv")
     if os.path.exists(csv_path):
-        print(f"  ⏭️  SKIPPING {version} — CSV already exists: {csv_path}")
+        print(f"  ⏭️  SKIPPING {out_name} — CSV already exists: {csv_path}")
         return
 
     print(f"\n{'─'*60}")
@@ -541,7 +542,7 @@ def evaluate_version(version, model_path=None):
     EnvClass = _get_env_class(version)
     os.makedirs(EVAL_OUTPUT_DIR, exist_ok=True)
 
-    all_results, completed = load_eval_progress(version)
+    all_results, completed = load_eval_progress(out_name)
     total_configs = len(INTENTIONS) * len(SCENARIOS)
     if completed:
         print(f"  resuming: {len(completed)}/{total_configs} configurations already done")
@@ -637,7 +638,7 @@ def evaluate_version(version, model_path=None):
             avg_sp = np.mean(avg_speeds) if avg_speeds else 0
 
             row = {
-                "version": version, "intention": int_name,
+                "version": out_name, "intention": int_name,
                 "scenario": sc_name, "collision_rate": col_rate,
                 "success_rate": success_rate,
                 "avg_travel_time": avg_tt,
@@ -673,7 +674,7 @@ def evaluate_version(version, model_path=None):
     all_results.sort(key=_sort_key)
 
     # Save CSV
-    csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{version}_results.csv")
+    csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{out_name}_results.csv")
     with open(csv_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(all_results[0].keys()))
         w.writeheader()
@@ -859,6 +860,11 @@ if __name__ == "__main__":
                         help="Override evaluation episodes per configuration")
     parser.add_argument("--workers", type=int, default=None,
                         help="Override number of training workers")
+    parser.add_argument("--policy-from", default=None, dest="policy_from",
+                        help="Evaluate --version's environment using another "
+                             "variant's trained policy. Lets the same weights be "
+                             "run with and without the shield, so the difference "
+                             "is the shield and not a different training run.")
     args = parser.parse_args()
 
     if args.timesteps is not None:
@@ -882,7 +888,12 @@ if __name__ == "__main__":
             train_all()
 
     if args.mode in ("eval", "all"):
-        if args.version:
+        if args.version and args.policy_from:
+            mp = os.path.join(CHECKPOINT_BASE, args.policy_from, "final_model.zip")
+            on = f"{args.version}__policy_{args.policy_from}"
+            print(f"  environment: {args.version}\n  policy:      {args.policy_from}\n  output:      {on}")
+            evaluate_version(args.version, model_path=mp, out_name=on)
+        elif args.version:
             evaluate_version(args.version)
         else:
             evaluate_all()
