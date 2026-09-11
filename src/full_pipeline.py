@@ -12,7 +12,7 @@ Usage:
     python src/full_pipeline.py --mode plot
     python src/full_pipeline.py --mode all
 """
-import argparse, os, sys, csv, json, warnings, time, glob, random, zipfile, zlib
+import argparse, os, sys, csv, json, warnings, time, glob, random, zipfile, zlib, gc, signal, subprocess
 from copy import deepcopy
 from datetime import datetime
 
@@ -434,6 +434,38 @@ def train_all():
 # EVALUATE
 # ═══════════════════════════════════════════════════════════════
 
+
+def _sumo_pids():
+    """PIDs of currently running SUMO processes."""
+    try:
+        out = subprocess.run(["pgrep", "-f", "sumo"], capture_output=True, text=True)
+        return {int(x) for x in out.stdout.split() if x.isdigit()}
+    except Exception:
+        return set()
+
+def _reap_sumo(before):
+    """
+    Kill SUMO processes that appeared since `before` and outlived their env.
+
+    Evaluation opens and closes one SUMO per episode, thousands of times.
+    Any that survive env.close() accumulate and hold sockets and memory, so
+    they are cleaned up explicitly. Only newly appeared PIDs are touched, so
+    a concurrent training sweep is left alone.
+    """
+    for pid in _sumo_pids() - before:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+def _rss_mb():
+    """Resident memory of this process in MB, for leak diagnostics."""
+    try:
+        with open("/proc/self/statm") as f:
+            return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
+    except Exception:
+        return -1.0
+
 def _eval_progress_path(version):
     return os.path.join(EVAL_OUTPUT_DIR, f"{version}_progress.jsonl")
 
@@ -547,15 +579,21 @@ def evaluate_version(version, model_path=None):
 
             for ep in range(N_EVAL_EPISODES):
                 ep_rates = rng.choice(rate_list)
-                env = DummyVecEnv([make_env(ep_rates)])
-                obs = env.reset()
-                done = False
-                while not done:
-                    action, _ = model.predict(obs, deterministic=True)
-                    obs, reward, dones, infos = env.step(action)
-                    done = dones[0]
-                info = infos[0]
-                t = info.get("telemetry", {}) or {}
+                sumo_before = _sumo_pids()
+                env = None
+                t = {}
+                try:
+                    env = DummyVecEnv([make_env(ep_rates)])
+                    obs = env.reset()
+                    done = False
+                    while not done:
+                        action, _ = model.predict(obs, deterministic=True)
+                        obs, reward, dones, infos = env.step(action)
+                        done = dones[0]
+                    t = infos[0].get("telemetry", {}) or {}
+                except Exception as exc:
+                    # One bad episode should not abandon the configuration.
+                    print(f"      [WARN] episode {ep} failed: {exc}")
 
                 if t.get("agent_collision", False):
                     collisions += 1
@@ -575,8 +613,22 @@ def evaluate_version(version, model_path=None):
                     shield_rss += sh.get("rss_overrides", 0)
                     shield_row += sh.get("row_overrides", 0)
 
-                env.close()
-                time.sleep(1.5)  # ⏳ Allow OS to release port to prevent Address already in use crash
+                # Tear down explicitly. env.close() alone leaves the env object
+                # and its TraCI socket alive until the collector happens to run,
+                # which over thousands of episodes exhausts system resources.
+                try:
+                    if env is not None:
+                        env.close()
+                except Exception:
+                    pass
+                _reap_sumo(sumo_before)
+                del env
+                gc.collect()
+                time.sleep(1.5)  # let the OS release the TraCI port
+
+                if ep and ep % 20 == 0:
+                    print(f"      [diag] episode {ep}: rss={_rss_mb():.0f}MB "
+                          f"sumo={len(_sumo_pids())}")
 
             col_rate = 100.0 * collisions / N_EVAL_EPISODES
             success_rate = 100.0 * successes / N_EVAL_EPISODES
