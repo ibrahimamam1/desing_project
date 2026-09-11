@@ -18,6 +18,8 @@ LOG_DIR=logs
 mkdir -p "$LOG_DIR"
 
 VERSIONS=(
+  heuristic_continous
+  heuristic_discrete
   attention_continous
   attention_discrete
   heuristic_attention_continous

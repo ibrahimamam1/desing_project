@@ -62,6 +62,8 @@ EVAL_SEED = 42
 
 # All 6 variants
 VERSIONS = [
+    "heuristic_continous",
+    "heuristic_discrete",
     "attention_continous",
     "attention_discrete",
     "heuristic_attention_continous",
@@ -70,10 +72,15 @@ VERSIONS = [
 ]
 
 VERSION_LABELS = {
+    "heuristic_continous": "Heuristic + Continuous",
+    "heuristic_discrete": "Heuristic + Discrete",
     "attention_continous": "Attention + Continuous",
     "attention_discrete": "Attention + Discrete",
-    "heuristic_attention_continous": "Heuristic + Continuous",
-    "heuristic_attention_discrete": "Heuristic + Discrete",
+    # These carry the attention module as well as the conflict heuristic, so
+    # they are not the report's Heuristic baselines and must not be labelled
+    # as such when both appear in the same figure.
+    "heuristic_attention_continous": "Heuristic+Attn + Continuous",
+    "heuristic_attention_discrete": "Heuristic+Attn + Discrete",
     "shielded_attention_continous": "Shielded + Continuous",
 }
 
@@ -186,7 +193,16 @@ def _make_flow_params(network_cls, rates):
     )
 
 def _get_env_class(version):
-    if version == "attention_continous":
+    if version == "heuristic_continous":
+        # Pure conflict heuristic: 32-dim observation, no attention module.
+        # This is the report's V2 "Heuristic + Continuous".
+        from src.envs.alpha_env_v01 import AlphaEnv_v01
+        return AlphaEnv_v01
+    elif version == "heuristic_discrete":
+        # The report's V1 "Heuristic + Discrete".
+        from src.envs.alpha_env_v01_discrete import AlphaEnv_v01_Discrete
+        return AlphaEnv_v01_Discrete
+    elif version == "attention_continous":
         from src.envs.alpha_env_v01_attention_continous import AlphaEnv_v01_Attention
         return AlphaEnv_v01_Attention
     elif version == "attention_discrete":
