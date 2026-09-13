@@ -35,6 +35,7 @@ class AlphaEnv_v01_ShieldedAttentionDiscrete(AlphaEnv_v01_AttentionDiscrete):
     ROW_ETA_WINDOW = AlphaEnv_v01_ShieldedAttention.ROW_ETA_WINDOW
     ROW_DIST = AlphaEnv_v01_ShieldedAttention.ROW_DIST
     ROW_CROSS = AlphaEnv_v01_ShieldedAttention.ROW_CROSS
+    COMMIT_ZONE = AlphaEnv_v01_ShieldedAttention.COMMIT_ZONE
 
     # _shield_check does not call super(), so it can be bound directly.
     # _compute_telemetry_stats does, and zero-argument super() resolves against

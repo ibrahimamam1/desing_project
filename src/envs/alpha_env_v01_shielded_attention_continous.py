@@ -41,6 +41,12 @@ class AlphaEnv_v01_ShieldedAttention(AlphaEnv_v01_Attention):
     ROW_DIST = _p("SHIELD_ROW_DIST", 15.0)
     ROW_CROSS = _p("SHIELD_ROW_CROSS", 0.3)
 
+    # Commit zone. When the ego can no longer stop before the conflict point,
+    # braking does not avoid the conflict; it leaves the car standing inside
+    # the junction in the path of cross traffic. With this enabled the shield
+    # lets it clear instead. Off by default so earlier results reproduce.
+    COMMIT_ZONE = _p("SHIELD_COMMIT_ZONE", 0.0)
+
     del _p
 
     def __init__(self, env_params, sim_params, network, simulator='traci'):
@@ -140,6 +146,12 @@ class AlphaEnv_v01_ShieldedAttention(AlphaEnv_v01_Attention):
             other_speed = n.get('v', 0.0)  # already m/s — do NOT multiply by max_speed
             ego_dist_to_cp = n.get('ego_dist_to_cp', 1.0) * self.perception_radius  # denormalise
             delta_eta = n.get('d_eta', 1.0)  # tanh-normalised, already in [-1, 1]
+
+            if self.COMMIT_ZONE:
+                stop_dist = ego_speed ** 2 / (2.0 * abs(self.EMERGENCY_DECEL))
+                if ego_dist_to_cp < stop_dist:
+                    self.shield_stats['commit_skips'] = self.shield_stats.get('commit_skips', 0) + 1
+                    continue
 
             # ── Layer 1: Path-Based TTC (works for all geometries incl. left turns) ──
             # Use ego_dist_to_cp (path distance to conflict point) not raw euclidean dist.

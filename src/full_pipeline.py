@@ -59,6 +59,10 @@ KEEP_LAST_CHECKPOINTS = 4
 NUM_WORKERS = 8
 N_EVAL_EPISODES = 42  # matches n_sims=42 in v0_1_evaluate.py
 EVAL_SEED = 42
+# When set, the per-episode traffic draw depends only on the configuration,
+# not the variant, so every variant sees identical traffic and comparisons
+# between them are paired. Off by default so earlier results reproduce.
+PAIRED_SEEDS = False
 
 # All 6 variants
 VERSIONS = [
@@ -128,6 +132,15 @@ SCENARIOS = {
         {"N": high,   "S": medium, "W": high,   "E": high},
         {"N": medium, "S": high,   "W": high,   "E": high},
     ],
+}
+
+# Traffic denser than Sc2_All_High, where the evaluated policies are near
+# their collision floor. A safety shield is meant for conditions a policy
+# handles badly, so it is also tested where there is room to show an effect.
+STRESS_SCENARIOS = {
+    "St1_All_550": [{"N": 550, "S": 550, "W": 550, "E": 550}],
+    "St2_All_700": [{"N": 700, "S": 700, "W": 700, "E": 700}],
+    "St3_All_850": [{"N": 850, "S": 850, "W": 850, "E": 850}],
 }
 
 DIR_MAP = {"N": "E#T-X", "E": "E#R-X", "S": "E#D-X", "W": "E#L-X"}
@@ -537,7 +550,10 @@ def _config_seed(version, int_name, sc_name):
     uninterrupted one. Deriving the seed from the configuration itself keeps
     the episode sequence identical either way.
     """
-    key = f"{EVAL_SEED}|{version}|{int_name}|{sc_name}".encode()
+    if PAIRED_SEEDS:
+        key = f"{EVAL_SEED}|{int_name}|{sc_name}".encode()
+    else:
+        key = f"{EVAL_SEED}|{version}|{int_name}|{sc_name}".encode()
     return zlib.crc32(key) & 0xffffffff
 
 def evaluate_version(version, model_path=None, out_name=None):
@@ -598,6 +614,7 @@ def evaluate_version(version, model_path=None, out_name=None):
             shield_ttc = 0
             shield_rss = 0
             shield_row = 0
+            shield_commit = 0
 
             for ep in range(N_EVAL_EPISODES):
                 ep_rates = rng.choice(rate_list)
@@ -634,6 +651,7 @@ def evaluate_version(version, model_path=None, out_name=None):
                     shield_ttc += sh.get("ttc_overrides", 0)
                     shield_rss += sh.get("rss_overrides", 0)
                     shield_row += sh.get("row_overrides", 0)
+                    shield_commit += sh.get("commit_skips", 0)
 
                 # Tear down explicitly. env.close() alone leaves the env object
                 # and its TraCI socket alive until the collector happens to run,
@@ -674,6 +692,7 @@ def evaluate_version(version, model_path=None, out_name=None):
                 "shield_ttc_overrides": shield_ttc,
                 "shield_rss_overrides": shield_rss,
                 "shield_row_overrides": shield_row,
+                "shield_commit_skips": shield_commit,
             }
             all_results.append(row)
             append_eval_progress(out_name, row)
@@ -884,6 +903,12 @@ if __name__ == "__main__":
     parser.add_argument("--extend", action="store_true",
                         help="Continue training a variant that already finished, "
                              "up to the --timesteps total")
+    parser.add_argument("--stress", action="store_true",
+                        help="Evaluate on STRESS_SCENARIOS instead of SCENARIOS")
+    parser.add_argument("--paired-seeds", action="store_true", dest="paired_seeds",
+                        help="Give every variant identical traffic draws")
+    parser.add_argument("--policy-file", default=None, dest="policy_file",
+                        help="Explicit checkpoint to evaluate with --policy-from")
     parser.add_argument("--tag", default=None,
                         help="Suffix for the output name, to keep tuning trials apart")
     parser.add_argument("--intentions", nargs="+", default=None,
@@ -907,6 +932,12 @@ if __name__ == "__main__":
         NUM_WORKERS = args.workers
         print(f"  [override] NUM_WORKERS = {NUM_WORKERS}")
 
+    if args.stress:
+        SCENARIOS = STRESS_SCENARIOS
+        print(f"  [stress] scenarios: {list(SCENARIOS)}")
+    if args.paired_seeds:
+        PAIRED_SEEDS = True
+        print("  [paired] identical traffic draws across variants")
     if args.intentions:
         INTENTIONS = {k: v for k, v in INTENTIONS.items() if k in args.intentions}
         print(f"  [subset] intentions: {list(INTENTIONS)}")
@@ -926,7 +957,7 @@ if __name__ == "__main__":
 
     if args.mode in ("eval", "all"):
         if args.version and args.policy_from:
-            mp = os.path.join(CHECKPOINT_BASE, args.policy_from, "final_model.zip")
+            mp = args.policy_file or os.path.join(CHECKPOINT_BASE, args.policy_from, "final_model.zip")
             on = f"{args.version}__policy_{args.policy_from}"
             if args.tag:
                 on += f"__{args.tag}"
