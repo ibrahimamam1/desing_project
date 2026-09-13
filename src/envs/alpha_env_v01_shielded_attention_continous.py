@@ -22,10 +22,26 @@ class AlphaEnv_v01_ShieldedAttention(AlphaEnv_v01_Attention):
     """
 
     # ── Shield Tuning Constants ──
-    TTC_THRESHOLD = 2.0          # seconds — if TTC < this, shield activates
-    RSS_MIN_GAP = 3.0            # meters — minimum safe following distance
-    RSS_REACTION_TIME = 0.5      # seconds — assumed reaction time
-    EMERGENCY_DECEL = -4.5       # m/s² — maximum emergency braking
+    # Overridable from the environment so candidate settings can be compared
+    # without editing the file; defaults reproduce the original behaviour.
+    def _p(name, default):
+        return float(os.environ.get(name, default))
+
+    TTC_THRESHOLD = _p("SHIELD_TTC_THRESHOLD", 2.0)      # s — TTC below this activates layer 1
+    RSS_MIN_GAP = _p("SHIELD_RSS_MIN_GAP", 3.0)          # m — minimum safe following distance
+    RSS_REACTION_TIME = _p("SHIELD_RSS_REACTION", 0.5)   # s — assumed reaction time
+    EMERGENCY_DECEL = _p("SHIELD_EMERGENCY_DECEL", -4.5) # m/s2 — maximum emergency braking
+
+    # Arrival-time windows. d_eta is tanh-normalised, so these decide how
+    # close two vehicles' arrival times must be before a layer intervenes.
+    # The RSS window drives most of the interventions and most of the cost.
+    TTC_ETA_WINDOW = _p("SHIELD_TTC_ETA", 0.5)
+    RSS_ETA_WINDOW = _p("SHIELD_RSS_ETA", 0.6)
+    ROW_ETA_WINDOW = _p("SHIELD_ROW_ETA", 0.15)
+    ROW_DIST = _p("SHIELD_ROW_DIST", 15.0)
+    ROW_CROSS = _p("SHIELD_ROW_CROSS", 0.3)
+
+    del _p
 
     def __init__(self, env_params, sim_params, network, simulator='traci'):
         super().__init__(env_params, sim_params, network, simulator)
@@ -131,7 +147,7 @@ class AlphaEnv_v01_ShieldedAttention(AlphaEnv_v01_Attention):
             if ego_speed > 0.1 and ego_dist_to_cp > 0.0:
                 ego_ttc = ego_dist_to_cp / ego_speed  # seconds until ego reaches conflict point
                 # delta_eta is tanh-normalised: |d_eta| < 0.5 ≈ within ~1s of each other
-                if ego_ttc < self.TTC_THRESHOLD and abs(delta_eta) < 0.5:
+                if ego_ttc < self.TTC_THRESHOLD and abs(delta_eta) < self.TTC_ETA_WINDOW:
                     # Deceleration needed to stop before conflict point: v²=2as → a=-v²/(2s)
                     safe_dist = max(ego_dist_to_cp - self.RSS_MIN_GAP, 0.5)
                     required_decel = -(ego_speed ** 2) / (2.0 * safe_dist)
@@ -149,7 +165,7 @@ class AlphaEnv_v01_ShieldedAttention(AlphaEnv_v01_Attention):
             if ego_dist_to_cp < d_safe and ego_dist_to_cp < self.perception_radius * 0.6:
                 # We're too close to conflict point — force braking
                 # delta_eta is tanh-normalised: |d_eta| < 0.6 ≈ within ~1.5s of simultaneous arrival
-                if abs(delta_eta) < 0.6:
+                if abs(delta_eta) < self.RSS_ETA_WINDOW:
                     brake_intensity = max(-2.0, self.EMERGENCY_DECEL * (1.0 - ego_dist_to_cp / d_safe))
                     if safe_accel > brake_intensity:
                         safe_accel = brake_intensity
@@ -159,7 +175,7 @@ class AlphaEnv_v01_ShieldedAttention(AlphaEnv_v01_Attention):
             # ── Layer 3: Right-of-Way (Yield) ──
             # If delta_eta < 0, the other vehicle arrives at conflict point first
             # Ego should yield (brake) if it doesn't have priority
-            if abs(delta_eta) < 0.15 and ego_dist_to_cp < 15.0:
+            if abs(delta_eta) < self.ROW_ETA_WINDOW and ego_dist_to_cp < self.ROW_DIST:
                 # Near-simultaneous arrival at conflict point
                 # Apply right-before-left rule: check relative heading
                 other_sin = n.get('sin', 0.0)
@@ -170,7 +186,7 @@ class AlphaEnv_v01_ShieldedAttention(AlphaEnv_v01_Attention):
 
                 # Cross product: positive means other is to our right (has priority)
                 cross = ego_cos * other_sin - ego_sin * other_cos
-                if cross > 0.3:  # other is to our right → they have priority
+                if cross > self.ROW_CROSS:  # other is to our right → they have priority
                     yield_decel = max(-1.5, -ego_speed * 0.3)
                     if safe_accel > yield_decel:
                         safe_accel = yield_decel
