@@ -12,7 +12,7 @@ Usage:
     python src/full_pipeline.py --mode plot
     python src/full_pipeline.py --mode all
 """
-import argparse, os, sys, csv, json, warnings, time, glob, random
+import argparse, os, sys, csv, json, warnings, time, glob, random, zipfile, zlib, gc, signal, subprocess
 from copy import deepcopy
 from datetime import datetime
 
@@ -51,12 +51,19 @@ PLOT_OUTPUT_DIR = os.path.join(ROOT, "plots")
 TB_DIR = os.path.join(ROOT, "tensorboard_logs", "v0_1_full")
 
 TOTAL_TIMESTEPS = 1_500_000
+# How often to write a resumable checkpoint, in environment steps. Training
+# runs for many hours and may be interrupted by a power cut, so this bounds
+# how much progress a hard stop can cost.
+CHECKPOINT_EVERY = 25_000
+KEEP_LAST_CHECKPOINTS = 4
 NUM_WORKERS = 8
 N_EVAL_EPISODES = 42  # matches n_sims=42 in v0_1_evaluate.py
 EVAL_SEED = 42
 
 # All 6 variants
 VERSIONS = [
+    "heuristic_continous",
+    "heuristic_discrete",
     "attention_continous",
     "attention_discrete",
     "heuristic_attention_continous",
@@ -65,10 +72,15 @@ VERSIONS = [
 ]
 
 VERSION_LABELS = {
+    "heuristic_continous": "Heuristic + Continuous",
+    "heuristic_discrete": "Heuristic + Discrete",
     "attention_continous": "Attention + Continuous",
     "attention_discrete": "Attention + Discrete",
-    "heuristic_attention_continous": "Heuristic + Continuous",
-    "heuristic_attention_discrete": "Heuristic + Discrete",
+    # These carry the attention module as well as the conflict heuristic, so
+    # they are not the report's Heuristic baselines and must not be labelled
+    # as such when both appear in the same figure.
+    "heuristic_attention_continous": "Heuristic+Attn + Continuous",
+    "heuristic_attention_discrete": "Heuristic+Attn + Discrete",
     "shielded_attention_continous": "Shielded + Continuous",
 }
 
@@ -181,7 +193,16 @@ def _make_flow_params(network_cls, rates):
     )
 
 def _get_env_class(version):
-    if version == "attention_continous":
+    if version == "heuristic_continous":
+        # Pure conflict heuristic: 32-dim observation, no attention module.
+        # This is the report's V2 "Heuristic + Continuous".
+        from src.envs.alpha_env_v01 import AlphaEnv_v01
+        return AlphaEnv_v01
+    elif version == "heuristic_discrete":
+        # The report's V1 "Heuristic + Discrete".
+        from src.envs.alpha_env_v01_discrete import AlphaEnv_v01_Discrete
+        return AlphaEnv_v01_Discrete
+    elif version == "attention_continous":
         from src.envs.alpha_env_v01_attention_continous import AlphaEnv_v01_Attention
         return AlphaEnv_v01_Attention
     elif version == "attention_discrete":
@@ -250,23 +271,51 @@ class LogCallback(BaseCallback):
 # TRAIN
 # ═══════════════════════════════════════════════════════════════
 
+def _checkpoint_steps(path):
+    """Step count encoded in a checkpoint filename, or None if unparseable."""
+    try:
+        base = os.path.basename(path)
+        return int(base.replace("rl_model_", "").replace("_steps.zip", ""))
+    except ValueError:
+        return None
+
+def list_checkpoints(ckpt_dir):
+    """All checkpoints in the directory, newest first."""
+    found = []
+    for f in glob.glob(os.path.join(ckpt_dir, "rl_model_*_steps.zip")):
+        steps = _checkpoint_steps(f)
+        if steps is not None:
+            found.append((steps, f))
+    found.sort(reverse=True)
+    return found
+
 def get_latest_checkpoint(ckpt_dir):
-    files = glob.glob(os.path.join(ckpt_dir, "rl_model_*_steps.zip"))
-    if not files:
-        return None, 0
-    latest_file = None
-    max_steps = -1
-    for f in files:
+    """
+    Newest checkpoint that actually loads.
+
+    A checkpoint written while the machine lost power can be truncated. Walk
+    back through the saved files until one opens cleanly, so an interrupted
+    run resumes from the last good point instead of dying on a corrupt zip.
+    """
+    for steps, path in list_checkpoints(ckpt_dir):
         try:
-            basename = os.path.basename(f)
-            steps_str = basename.replace("rl_model_", "").replace("_steps.zip", "")
-            steps = int(steps_str)
-            if steps > max_steps:
-                max_steps = steps
-                latest_file = f
-        except ValueError:
+            with zipfile.ZipFile(path) as zf:
+                if zf.testzip() is not None:
+                    raise zipfile.BadZipFile("failed CRC check")
+            return path, steps
+        except (zipfile.BadZipFile, OSError) as e:
+            print(f"  [WARN] discarding unreadable checkpoint {os.path.basename(path)}: {e}")
             continue
-    return latest_file, max_steps
+    return None, 0
+
+def prune_checkpoints(ckpt_dir, keep=KEEP_LAST_CHECKPOINTS):
+    """Keep only the most recent few checkpoints so disk use stays bounded."""
+    entries = list_checkpoints(ckpt_dir)
+    for _, path in entries[keep:]:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 def train_version(version):
     # Skip if checkpoint already exists
@@ -282,6 +331,7 @@ def train_version(version):
 
     ckpt_dir = os.path.join(CHECKPOINT_BASE, version)
     os.makedirs(ckpt_dir, exist_ok=True)
+    prune_checkpoints(ckpt_dir)
 
     # Default training uses uniform_random with medium traffic
     train_rates = {"N": 275, "S": 275, "W": 275, "E": 275}
@@ -323,7 +373,7 @@ def train_version(version):
         )
 
     checkpoint_callback = CheckpointCallback(
-        save_freq=max(1, 100_000 // NUM_WORKERS),
+        save_freq=max(1, CHECKPOINT_EVERY // NUM_WORKERS),
         save_path=ckpt_dir,
         name_prefix="rl_model"
     )
@@ -337,10 +387,54 @@ def train_version(version):
     save_path = os.path.join(ckpt_dir, "final_model")
     model.save(save_path)
     vec_env.close()
+    prune_checkpoints(ckpt_dir)
 
     print(f"\n  ✅ {VERSION_LABELS[version]} done in {elapsed/60:.1f} min")
     print(f"  Saved: {save_path}.zip\n")
     return save_path + ".zip"
+
+def show_status():
+    """Per-variant training progress, so an interrupted sweep can be picked up."""
+    print(f"\n{'='*72}")
+    print(f"  TRAINING STATUS  (target {TOTAL_TIMESTEPS:,} steps per variant)")
+    print(f"{'='*72}")
+    total_done = 0
+    for v in VERSIONS:
+        ckpt_dir = os.path.join(CHECKPOINT_BASE, v)
+        final = os.path.join(ckpt_dir, "final_model.zip")
+        if os.path.exists(final):
+            print(f"  {VERSION_LABELS[v]:32s}  DONE")
+            total_done += TOTAL_TIMESTEPS
+            continue
+        _, steps = get_latest_checkpoint(ckpt_dir)
+        pct = 100.0 * steps / TOTAL_TIMESTEPS
+        bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))
+        print(f"  {VERSION_LABELS[v]:32s}  [{bar}] {steps:>9,} steps  {pct:5.1f}%")
+        total_done += steps
+    overall = 100.0 * total_done / (TOTAL_TIMESTEPS * len(VERSIONS))
+    print(f"{'-'*72}")
+    print(f"  overall: {total_done:,} / {TOTAL_TIMESTEPS * len(VERSIONS):,} steps  ({overall:.1f}%)")
+    print(f"{'='*72}")
+
+    total_configs = len(INTENTIONS) * len(SCENARIOS)
+    print(f"\n  EVALUATION  ({total_configs} configurations per variant)")
+    print(f"{'-'*72}")
+    eval_done = 0
+    for v in VERSIONS:
+        csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{v}_results.csv")
+        if os.path.exists(csv_path):
+            print(f"  {VERSION_LABELS[v]:32s}  DONE")
+            eval_done += total_configs
+            continue
+        _, completed = load_eval_progress(v)
+        n = len(completed)
+        eval_done += n
+        bar = "#" * int(20 * n / total_configs) + "." * (20 - int(20 * n / total_configs))
+        print(f"  {VERSION_LABELS[v]:32s}  [{bar}] {n:>2}/{total_configs}")
+    ev_pct = 100.0 * eval_done / (total_configs * len(VERSIONS))
+    print(f"{'-'*72}")
+    print(f"  overall: {eval_done} / {total_configs * len(VERSIONS)} configurations  ({ev_pct:.1f}%)")
+    print(f"{'='*72}\n")
 
 def train_all():
     results = {}
@@ -355,7 +449,93 @@ def train_all():
 # ═══════════════════════════════════════════════════════════════
 # EVALUATE
 # ═══════════════════════════════════════════════════════════════
-def evaluate_version(version, model_path=None):
+
+
+def _sumo_pids():
+    """PIDs of currently running SUMO processes."""
+    try:
+        out = subprocess.run(["pgrep", "-f", "sumo"], capture_output=True, text=True)
+        return {int(x) for x in out.stdout.split() if x.isdigit()}
+    except Exception:
+        return set()
+
+def _reap_sumo(before):
+    """
+    Kill SUMO processes that appeared since `before` and outlived their env.
+
+    Evaluation opens and closes one SUMO per episode, thousands of times.
+    Any that survive env.close() accumulate and hold sockets and memory, so
+    they are cleaned up explicitly. Only newly appeared PIDs are touched, so
+    a concurrent training sweep is left alone.
+    """
+    for pid in _sumo_pids() - before:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+def _rss_mb():
+    """Resident memory of this process in MB, for leak diagnostics."""
+    try:
+        with open("/proc/self/statm") as f:
+            return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
+    except Exception:
+        return -1.0
+
+def _eval_progress_path(version):
+    return os.path.join(EVAL_OUTPUT_DIR, f"{version}_progress.jsonl")
+
+def load_eval_progress(version):
+    """
+    Configurations already evaluated for this variant.
+
+    Each finished configuration is appended as one JSON line, so an
+    interrupted run resumes at the configuration boundary instead of
+    restarting the whole variant. A line half-written when the machine lost
+    power will not parse and is dropped, costing at most one configuration.
+    """
+    path = _eval_progress_path(version)
+    rows, done = [], set()
+    if not os.path.exists(path):
+        return rows, done
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                print(f"  [WARN] dropping incomplete progress line in {os.path.basename(path)}")
+                continue
+            key = (row.get("intention"), row.get("scenario"))
+            if key in done:
+                continue
+            done.add(key)
+            rows.append(row)
+    return rows, done
+
+def append_eval_progress(version, row):
+    """Append one finished configuration, forcing it to disk before returning."""
+    os.makedirs(EVAL_OUTPUT_DIR, exist_ok=True)
+    with open(_eval_progress_path(version), "a") as f:
+        f.write(json.dumps(row) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+def _config_seed(version, int_name, sc_name):
+    """
+    Deterministic seed per configuration.
+
+    Seeding once per variant would make the flow compositions depend on how
+    many configurations ran before, so a resumed run would not reproduce an
+    uninterrupted one. Deriving the seed from the configuration itself keeps
+    the episode sequence identical either way.
+    """
+    key = f"{EVAL_SEED}|{version}|{int_name}|{sc_name}".encode()
+    return zlib.crc32(key) & 0xffffffff
+
+def evaluate_version(version, model_path=None, out_name=None):
     from stable_baselines3.common.vec_env import DummyVecEnv
 
     if model_path is None:
@@ -364,9 +544,10 @@ def evaluate_version(version, model_path=None):
         print(f"  ⚠️  Checkpoint not found: {model_path}, skipping {version}")
         return
 
-    csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{version}_results.csv")
+    out_name = out_name or version
+    csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{out_name}_results.csv")
     if os.path.exists(csv_path):
-        print(f"  ⏭️  SKIPPING {version} — CSV already exists: {csv_path}")
+        print(f"  ⏭️  SKIPPING {out_name} — CSV already exists: {csv_path}")
         return
 
     print(f"\n{'─'*60}")
@@ -377,14 +558,20 @@ def evaluate_version(version, model_path=None):
     EnvClass = _get_env_class(version)
     os.makedirs(EVAL_OUTPUT_DIR, exist_ok=True)
 
-    all_results = []
-
-    # Fixed seed so the per-episode choice of flow composition is reproducible
-    # across reruns and across variants.
-    random.seed(EVAL_SEED)
+    all_results, completed = load_eval_progress(out_name)
+    total_configs = len(INTENTIONS) * len(SCENARIOS)
+    if completed:
+        print(f"  resuming: {len(completed)}/{total_configs} configurations already done")
 
     for int_name, int_cls in INTENTIONS.items():
         for sc_name, rate_list in SCENARIOS.items():
+            if (int_name, sc_name) in completed:
+                print(f"    {int_name:20s} {sc_name:15s} - already done, skipping")
+                continue
+
+            # Seeded per configuration, so a resumed run draws the same flow
+            # compositions as an uninterrupted one.
+            rng = random.Random(_config_seed(version, int_name, sc_name))
 
             def make_env(_rates):
                 def _thunk():
@@ -408,16 +595,22 @@ def evaluate_version(version, model_path=None):
             shield_row = 0
 
             for ep in range(N_EVAL_EPISODES):
-                ep_rates = random.choice(rate_list)
-                env = DummyVecEnv([make_env(ep_rates)])
-                obs = env.reset()
-                done = False
-                while not done:
-                    action, _ = model.predict(obs, deterministic=True)
-                    obs, reward, dones, infos = env.step(action)
-                    done = dones[0]
-                info = infos[0]
-                t = info.get("telemetry", {}) or {}
+                ep_rates = rng.choice(rate_list)
+                sumo_before = _sumo_pids()
+                env = None
+                t = {}
+                try:
+                    env = DummyVecEnv([make_env(ep_rates)])
+                    obs = env.reset()
+                    done = False
+                    while not done:
+                        action, _ = model.predict(obs, deterministic=True)
+                        obs, reward, dones, infos = env.step(action)
+                        done = dones[0]
+                    t = infos[0].get("telemetry", {}) or {}
+                except Exception as exc:
+                    # One bad episode should not abandon the configuration.
+                    print(f"      [WARN] episode {ep} failed: {exc}")
 
                 if t.get("agent_collision", False):
                     collisions += 1
@@ -437,8 +630,22 @@ def evaluate_version(version, model_path=None):
                     shield_rss += sh.get("rss_overrides", 0)
                     shield_row += sh.get("row_overrides", 0)
 
-                env.close()
-                time.sleep(1.5)  # ⏳ Allow OS to release port to prevent Address already in use crash
+                # Tear down explicitly. env.close() alone leaves the env object
+                # and its TraCI socket alive until the collector happens to run,
+                # which over thousands of episodes exhausts system resources.
+                try:
+                    if env is not None:
+                        env.close()
+                except Exception:
+                    pass
+                _reap_sumo(sumo_before)
+                del env
+                gc.collect()
+                time.sleep(1.5)  # let the OS release the TraCI port
+
+                if ep and ep % 20 == 0:
+                    print(f"      [diag] episode {ep}: rss={_rss_mb():.0f}MB "
+                          f"sumo={len(_sumo_pids())}")
 
             col_rate = 100.0 * collisions / N_EVAL_EPISODES
             success_rate = 100.0 * successes / N_EVAL_EPISODES
@@ -447,7 +654,7 @@ def evaluate_version(version, model_path=None):
             avg_sp = np.mean(avg_speeds) if avg_speeds else 0
 
             row = {
-                "version": version, "intention": int_name,
+                "version": out_name, "intention": int_name,
                 "scenario": sc_name, "collision_rate": col_rate,
                 "success_rate": success_rate,
                 "avg_travel_time": avg_tt,
@@ -464,14 +671,26 @@ def evaluate_version(version, model_path=None):
                 "shield_row_overrides": shield_row,
             }
             all_results.append(row)
+            append_eval_progress(out_name, row)
             msg = (f"    {int_name:20s} {sc_name:15s} → col={col_rate:5.1f}% "
                    f"succ={success_rate:5.1f}% tt={avg_tt:5.1f}s wait={avg_wt:5.1f}s")
             if shield_steps:
                 msg += f" shield={100.0 * shield_overrides / shield_steps:4.1f}%"
             print(msg)
 
+    # Resumed rows come back in whatever order they were finished, so restore
+    # the canonical intention x scenario ordering before writing.
+    _int_order = list(INTENTIONS.keys())
+    _sc_order = list(SCENARIOS.keys())
+    def _sort_key(r):
+        try:
+            return (_int_order.index(r["intention"]), _sc_order.index(r["scenario"]))
+        except ValueError:
+            return (len(_int_order), len(_sc_order))
+    all_results.sort(key=_sort_key)
+
     # Save CSV
-    csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{version}_results.csv")
+    csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{out_name}_results.csv")
     with open(csv_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(all_results[0].keys()))
         w.writeheader()
@@ -649,7 +868,7 @@ def plot_results():
 # ═══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["train", "eval", "plot", "all"], required=True)
+    parser.add_argument("--mode", choices=["train", "eval", "plot", "all", "status"], required=True)
     parser.add_argument("--version", default=None, help="Train/eval single version only")
     parser.add_argument("--timesteps", type=int, default=None,
                         help="Override training timesteps (for smoke tests)")
@@ -657,6 +876,17 @@ if __name__ == "__main__":
                         help="Override evaluation episodes per configuration")
     parser.add_argument("--workers", type=int, default=None,
                         help="Override number of training workers")
+    parser.add_argument("--tag", default=None,
+                        help="Suffix for the output name, to keep tuning trials apart")
+    parser.add_argument("--intentions", nargs="+", default=None,
+                        help="Restrict evaluation to these intention settings")
+    parser.add_argument("--scenarios", nargs="+", default=None,
+                        help="Restrict evaluation to these traffic scenarios")
+    parser.add_argument("--policy-from", default=None, dest="policy_from",
+                        help="Evaluate --version's environment using another "
+                             "variant's trained policy. Lets the same weights be "
+                             "run with and without the shield, so the difference "
+                             "is the shield and not a different training run.")
     args = parser.parse_args()
 
     if args.timesteps is not None:
@@ -669,6 +899,17 @@ if __name__ == "__main__":
         NUM_WORKERS = args.workers
         print(f"  [override] NUM_WORKERS = {NUM_WORKERS}")
 
+    if args.intentions:
+        INTENTIONS = {k: v for k, v in INTENTIONS.items() if k in args.intentions}
+        print(f"  [subset] intentions: {list(INTENTIONS)}")
+    if args.scenarios:
+        SCENARIOS = {k: v for k, v in SCENARIOS.items() if k in args.scenarios}
+        print(f"  [subset] scenarios: {list(SCENARIOS)}")
+
+    if args.mode == "status":
+        show_status()
+        sys.exit(0)
+
     if args.mode in ("train", "all"):
         if args.version:
             train_version(args.version)
@@ -676,7 +917,14 @@ if __name__ == "__main__":
             train_all()
 
     if args.mode in ("eval", "all"):
-        if args.version:
+        if args.version and args.policy_from:
+            mp = os.path.join(CHECKPOINT_BASE, args.policy_from, "final_model.zip")
+            on = f"{args.version}__policy_{args.policy_from}"
+            if args.tag:
+                on += f"__{args.tag}"
+            print(f"  environment: {args.version}\n  policy:      {args.policy_from}\n  output:      {on}")
+            evaluate_version(args.version, model_path=mp, out_name=on)
+        elif args.version:
             evaluate_version(args.version)
         else:
             evaluate_all()

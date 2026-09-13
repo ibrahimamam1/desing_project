@@ -11,3 +11,5 @@ __pycache__/
 *.pyo
 train_sweep.log
 eval_results/
+logs/
+.keep_training.lock
