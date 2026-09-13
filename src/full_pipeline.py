@@ -876,6 +876,12 @@ if __name__ == "__main__":
                         help="Override evaluation episodes per configuration")
     parser.add_argument("--workers", type=int, default=None,
                         help="Override number of training workers")
+    parser.add_argument("--tag", default=None,
+                        help="Suffix for the output name, to keep tuning trials apart")
+    parser.add_argument("--intentions", nargs="+", default=None,
+                        help="Restrict evaluation to these intention settings")
+    parser.add_argument("--scenarios", nargs="+", default=None,
+                        help="Restrict evaluation to these traffic scenarios")
     parser.add_argument("--policy-from", default=None, dest="policy_from",
                         help="Evaluate --version's environment using another "
                              "variant's trained policy. Lets the same weights be "
@@ -893,6 +899,13 @@ if __name__ == "__main__":
         NUM_WORKERS = args.workers
         print(f"  [override] NUM_WORKERS = {NUM_WORKERS}")
 
+    if args.intentions:
+        INTENTIONS = {k: v for k, v in INTENTIONS.items() if k in args.intentions}
+        print(f"  [subset] intentions: {list(INTENTIONS)}")
+    if args.scenarios:
+        SCENARIOS = {k: v for k, v in SCENARIOS.items() if k in args.scenarios}
+        print(f"  [subset] scenarios: {list(SCENARIOS)}")
+
     if args.mode == "status":
         show_status()
         sys.exit(0)
@@ -907,6 +920,8 @@ if __name__ == "__main__":
         if args.version and args.policy_from:
             mp = os.path.join(CHECKPOINT_BASE, args.policy_from, "final_model.zip")
             on = f"{args.version}__policy_{args.policy_from}"
+            if args.tag:
+                on += f"__{args.tag}"
             print(f"  environment: {args.version}\n  policy:      {args.policy_from}\n  output:      {on}")
             evaluate_version(args.version, model_path=mp, out_name=on)
         elif args.version:
