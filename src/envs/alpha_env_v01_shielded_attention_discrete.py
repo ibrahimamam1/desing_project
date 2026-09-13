@@ -36,8 +36,11 @@ class AlphaEnv_v01_ShieldedAttentionDiscrete(AlphaEnv_v01_AttentionDiscrete):
     ROW_DIST = AlphaEnv_v01_ShieldedAttention.ROW_DIST
     ROW_CROSS = AlphaEnv_v01_ShieldedAttention.ROW_CROSS
 
+    # _shield_check does not call super(), so it can be bound directly.
+    # _compute_telemetry_stats does, and zero-argument super() resolves against
+    # the class that defines it, so borrowing it here would raise
+    # "obj must be an instance or subtype of type". It is defined below instead.
     _shield_check = AlphaEnv_v01_ShieldedAttention._shield_check
-    _compute_telemetry_stats = AlphaEnv_v01_ShieldedAttention._compute_telemetry_stats
 
     def __init__(self, env_params, sim_params, network, simulator='traci'):
         super().__init__(env_params, sim_params, network, simulator)
@@ -75,6 +78,17 @@ class AlphaEnv_v01_ShieldedAttentionDiscrete(AlphaEnv_v01_AttentionDiscrete):
                 if 'row' in reason:
                     self.shield_stats['row_overrides'] += 1
             self.k.vehicle.apply_acceleration([self.agent_id], [safe_accel])
+
+    def _compute_telemetry_stats(self):
+        """Adds the shield intervention counters to the episode telemetry."""
+        stats = super()._compute_telemetry_stats()
+        steps = max(self.shield_stats['total_steps'], 1)
+        stats["shield_stats"] = dict(self.shield_stats)
+        stats["shield_override_rate"] = self.shield_stats['total_overrides'] / steps
+        stats["shield_ttc_rate"] = self.shield_stats['ttc_overrides'] / steps
+        stats["shield_rss_rate"] = self.shield_stats['rss_overrides'] / steps
+        stats["shield_row_rate"] = self.shield_stats['row_overrides'] / steps
+        return stats
 
     def reset(self, **kwargs):
         self.shield_stats = {
