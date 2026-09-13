@@ -82,6 +82,7 @@ VERSION_LABELS = {
     "heuristic_attention_continous": "Heuristic+Attn + Continuous",
     "heuristic_attention_discrete": "Heuristic+Attn + Discrete",
     "shielded_attention_continous": "Shielded + Continuous",
+    "shielded_attention_discrete": "Shielded + Discrete",
 }
 
 # Intentions
@@ -214,6 +215,9 @@ def _get_env_class(version):
     elif version == "heuristic_attention_discrete":
         from src.envs.alpha_env_v01_heuristic_attention_discrete import AlphaEnv_v01_HeuristicAttentionDiscrete
         return AlphaEnv_v01_HeuristicAttentionDiscrete
+    elif version == "shielded_attention_discrete":
+        from src.envs.alpha_env_v01_shielded_attention_discrete import AlphaEnv_v01_ShieldedAttentionDiscrete
+        return AlphaEnv_v01_ShieldedAttentionDiscrete
     elif version == "shielded_attention_continous":
         from src.envs.alpha_env_v01_shielded_attention_continous import AlphaEnv_v01_ShieldedAttention
         return AlphaEnv_v01_ShieldedAttention
