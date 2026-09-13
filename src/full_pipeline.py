@@ -82,6 +82,7 @@ VERSION_LABELS = {
     "heuristic_attention_continous": "Heuristic+Attn + Continuous",
     "heuristic_attention_discrete": "Heuristic+Attn + Discrete",
     "shielded_attention_continous": "Shielded + Continuous",
+    "shielded_attention_discrete": "Shielded + Discrete",
 }
 
 # Intentions
@@ -214,6 +215,9 @@ def _get_env_class(version):
     elif version == "heuristic_attention_discrete":
         from src.envs.alpha_env_v01_heuristic_attention_discrete import AlphaEnv_v01_HeuristicAttentionDiscrete
         return AlphaEnv_v01_HeuristicAttentionDiscrete
+    elif version == "shielded_attention_discrete":
+        from src.envs.alpha_env_v01_shielded_attention_discrete import AlphaEnv_v01_ShieldedAttentionDiscrete
+        return AlphaEnv_v01_ShieldedAttentionDiscrete
     elif version == "shielded_attention_continous":
         from src.envs.alpha_env_v01_shielded_attention_continous import AlphaEnv_v01_ShieldedAttention
         return AlphaEnv_v01_ShieldedAttention
@@ -317,10 +321,11 @@ def prune_checkpoints(ckpt_dir, keep=KEEP_LAST_CHECKPOINTS):
         except OSError:
             pass
 
-def train_version(version):
-    # Skip if checkpoint already exists
+def train_version(version, extend=False):
+    # Skip if checkpoint already exists, unless we are deliberately training
+    # this variant further than it was originally run.
     ckpt_path = os.path.join(CHECKPOINT_BASE, version, "final_model.zip")
-    if os.path.exists(ckpt_path):
+    if os.path.exists(ckpt_path) and not extend:
         print(f"\n  ⏭️  SKIPPING {VERSION_LABELS[version]} — checkpoint exists: {ckpt_path}")
         return ckpt_path
 
@@ -876,6 +881,9 @@ if __name__ == "__main__":
                         help="Override evaluation episodes per configuration")
     parser.add_argument("--workers", type=int, default=None,
                         help="Override number of training workers")
+    parser.add_argument("--extend", action="store_true",
+                        help="Continue training a variant that already finished, "
+                             "up to the --timesteps total")
     parser.add_argument("--tag", default=None,
                         help="Suffix for the output name, to keep tuning trials apart")
     parser.add_argument("--intentions", nargs="+", default=None,
@@ -912,7 +920,7 @@ if __name__ == "__main__":
 
     if args.mode in ("train", "all"):
         if args.version:
-            train_version(args.version)
+            train_version(args.version, extend=args.extend)
         else:
             train_all()
 
