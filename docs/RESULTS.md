@@ -67,12 +67,29 @@ environment differs from the pre-defence training script, `src/configs/v0_1_sing
 | Environment warmup | 5 steps | 50 steps |
 | PPO hyperparameters, 1.5M steps, 8 workers | — | identical |
 
-The revised pipeline therefore trains on an easier task. To remove this difference, every
-controller is being **retrained in the pre-defence training environment**
-(`--train-profile ibrahima`) and evaluated on the same benchmark. Those results are added
-automatically to Section A of `results_tables.md` as each run completes. The only difference
-that remains is the three leader features (gap, leader speed, leader TTC) added to the
-observation after the pre-defence report.
+The revised pipeline therefore trains on an easier task.
+
+### 2.3 Pre-defence environment for training and evaluation
+
+To remove this difference, Attention + Continuous was **retrained in the pre-defence training
+environment** (`--train-profile ibrahima`) and **evaluated in that same environment**
+(`--eval-profile ibrahima`), with the shield off, on, and in a rear-aware variant. For these
+results, training and evaluation use the same environment as the pre-defence study:
+400 veh/h cross traffic, 275 veh/h background traffic in the agent's lane, background vehicles
+that ignore SUMO safety checks, RL spawn probability 0.3 and a 5-step warmup.
+
+Two implementation details differ. The observation includes three leader features (gap,
+leader speed, leader TTC) added after the pre-defence report. Training used 24 parallel
+workers with a 341-step rollout, keeping the batch at 8,184 samples (8,192 in the original).
+
+These results are written automatically to **Section D of
+[`results_tables.md`](results_tables.md)** as each run completes.
+
+A controller trained in the revised pipeline does not transfer to this environment: in a
+6-episode check it collided in 3 of 6 episodes without the shield and 5 of 6 with it,
+because background vehicles that ignore safety checks rear-end a vehicle the shield slows
+down. This motivated the rear-aware variant, whose settings (1.5 s follower time gap,
+braking capped at −1.0 m/s²) were fixed before evaluation.
 
 ---
 
