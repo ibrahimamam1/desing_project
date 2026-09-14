@@ -238,6 +238,21 @@ def _make_flow_params(network_cls, rates, profile=None):
             edges_distribution=["E#D-X", "E#L-X", "E#R-X", "E#T-X"]),
     )
 
+
+def _apply_sumo_sleep():
+    """
+    Set Flow's fixed pause between launching SUMO and connecting TraCI.
+
+    Flow sleeps SUMO_SLEEP (1.0 s) on every SUMO launch, and every episode
+    reset launches one. traci.connect retries if SUMO is not ready yet, so the
+    pause only adds waiting; it does not change the simulation. Called inside
+    each environment constructor because vectorised workers re-import Flow.
+    """
+    val = os.environ.get("SUMO_SLEEP")
+    if val is not None:
+        import flow.config as flow_config
+        flow_config.SUMO_SLEEP = float(val)
+
 def _get_env_class(version):
     if version == "heuristic_continous":
         # Pure conflict heuristic: 32-dim observation, no attention module.
@@ -390,6 +405,7 @@ def train_version(version, extend=False):
     EnvClass = _get_env_class(version)
 
     def make_env():
+        _apply_sumo_sleep()
         p = fp
         network = p["network"](name="Train", vehicles=deepcopy(p["veh"]),
             net_params=p["net"], initial_config=p["initial"],
@@ -630,6 +646,7 @@ def evaluate_version(version, model_path=None, out_name=None):
 
             def make_env(_rates):
                 def _thunk():
+                    _apply_sumo_sleep()
                     fp = _make_flow_params(int_cls, _rates, profile=EVAL_PROFILE)
                     network = fp["network"](name="Eval", vehicles=deepcopy(fp["veh"]),
                         net_params=fp["net"], initial_config=fp["initial"],
