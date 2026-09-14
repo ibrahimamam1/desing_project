@@ -77,9 +77,11 @@ Attention + Continuous trained with `--train-profile ibrahima` and evaluated wit
 | Controller | Collision rate | 95% CI | Collisions | Success | Travel time | Shield overrides |
 |---|---|---|---|---|---|---|
 | Attention + Continuous | 6.35% | 5.00-8.03% | 64/1008 | 92.1% | 21.5 s | - |
+| Attention + Continuous + Shield (rear-aware) | 9.42% | 7.77-11.39% | 95/1008 | 86.4% | 26.5 s | 8.0% |
 
 Rear-aware settings were fixed before evaluation: follower time gap 1.5 s, shield braking capped at -1.0 m/s2 when a follower is closer than that.
 
+- Rear-aware shield: 64 vs 95 collisions, p = 0.013
 
 ## C. Comparison with the pre-defence study
 
