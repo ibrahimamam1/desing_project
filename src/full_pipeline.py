@@ -63,6 +63,13 @@ EVAL_SEED = 42
 # not the variant, so every variant sees identical traffic and comparisons
 # between them are paired. Off by default so earlier results reproduce.
 PAIRED_SEEDS = False
+# Environment profile applied at evaluation time; None is the benchmark.
+EVAL_PROFILE = None
+# Pause after each evaluation episode so the OS can release the TraCI port.
+EVAL_SLEEP = float(os.environ.get("EVAL_SLEEP", 1.5))
+# Rollout length per worker. Keep N_STEPS x workers equal to 8192 to match
+# the original training batch when changing the worker count.
+N_STEPS = 1024
 
 # All 6 variants
 VERSIONS = [
@@ -141,6 +148,13 @@ STRESS_SCENARIOS = {
     "St1_All_550": [{"N": 550, "S": 550, "W": 550, "E": 550}],
     "St2_All_700": [{"N": 700, "S": 700, "W": 700, "E": 700}],
     "St3_All_850": [{"N": 850, "S": 850, "W": 850, "E": 850}],
+}
+
+# The pre-defence training environment used as an evaluation scenario: denser
+# cross traffic, background traffic in the agent's lane, and background
+# vehicles that ignore SUMO safety checks. Selected with --eval-profile ibrahima.
+COMPLEX_SCENARIOS = {
+    "Cx_PreDefence": [{"N": 400, "S": 400, "W": 275, "E": 400}],
 }
 
 DIR_MAP = {"N": "E#T-X", "E": "E#R-X", "S": "E#D-X", "W": "E#L-X"}
@@ -396,13 +410,14 @@ def train_version(version, extend=False):
             env=vec_env,
             device="cuda",
             tensorboard_log=os.path.join(TB_DIR, version),
+            custom_objects={"n_steps": N_STEPS},
         )
     else:
         model = PPO(
             policy="MlpPolicy", env=vec_env,
             policy_kwargs=_policy_kwargs(version),
             learning_rate=lr_schedule(3e-4, 1e-5),
-            n_steps=1024, batch_size=256, n_epochs=10,
+            n_steps=N_STEPS, batch_size=256, n_epochs=10,
             gamma=0.98, gae_lambda=0.95, clip_range=0.25,
             max_grad_norm=0.5, ent_coef=0.01,
             tensorboard_log=os.path.join(TB_DIR, version),
@@ -615,7 +630,7 @@ def evaluate_version(version, model_path=None, out_name=None):
 
             def make_env(_rates):
                 def _thunk():
-                    fp = _make_flow_params(int_cls, _rates)
+                    fp = _make_flow_params(int_cls, _rates, profile=EVAL_PROFILE)
                     network = fp["network"](name="Eval", vehicles=deepcopy(fp["veh"]),
                         net_params=fp["net"], initial_config=fp["initial"],
                         traffic_lights=TrafficLightParams())
@@ -635,23 +650,49 @@ def evaluate_version(version, model_path=None, out_name=None):
             shield_row = 0
             shield_commit = 0
 
+            failed_episodes = 0
+
             for ep in range(N_EVAL_EPISODES):
                 ep_rates = rng.choice(rate_list)
-                sumo_before = _sumo_pids()
-                env = None
-                t = {}
-                try:
-                    env = DummyVecEnv([make_env(ep_rates)])
-                    obs = env.reset()
-                    done = False
-                    while not done:
-                        action, _ = model.predict(obs, deterministic=True)
-                        obs, reward, dones, infos = env.step(action)
-                        done = dones[0]
-                    t = infos[0].get("telemetry", {}) or {}
-                except Exception as exc:
-                    # One bad episode should not abandon the configuration.
-                    print(f"      [WARN] episode {ep} failed: {exc}")
+                t = None
+                # Retry a crashed episode instead of recording it. A failed
+                # episode has no telemetry, and counting it would read as a
+                # collision-free run.
+                for attempt in range(3):
+                    sumo_before = _sumo_pids()
+                    env = None
+                    try:
+                        env = DummyVecEnv([make_env(ep_rates)])
+                        obs = env.reset()
+                        done = False
+                        while not done:
+                            action, _ = model.predict(obs, deterministic=True)
+                            obs, reward, dones, infos = env.step(action)
+                            done = dones[0]
+                        t = infos[0].get("telemetry", {}) or {}
+                    except Exception as exc:
+                        t = None
+                        print(f"      [WARN] episode {ep} attempt {attempt + 1} failed: {exc}")
+
+                    # Tear down explicitly. env.close() alone leaves the env object
+                    # and its TraCI socket alive until the collector happens to run,
+                    # which over thousands of episodes exhausts system resources.
+                    try:
+                        if env is not None:
+                            env.close()
+                    except Exception:
+                        pass
+                    _reap_sumo(sumo_before)
+                    del env
+                    gc.collect()
+                    time.sleep(EVAL_SLEEP)
+
+                    if t is not None:
+                        break
+
+                if t is None:
+                    failed_episodes += 1
+                    continue
 
                 if t.get("agent_collision", False):
                     collisions += 1
@@ -662,7 +703,6 @@ def evaluate_version(version, model_path=None, out_name=None):
                 avg_speeds.append(t.get("agent_avg_speed", 0))
 
                 # Shield counters, present only for the shielded variant.
-                # Must be read before env.close(), while the info dict is alive.
                 sh = t.get("shield_stats")
                 if sh:
                     shield_steps += sh.get("total_steps", 0)
@@ -672,25 +712,13 @@ def evaluate_version(version, model_path=None, out_name=None):
                     shield_row += sh.get("row_overrides", 0)
                     shield_commit += sh.get("commit_skips", 0)
 
-                # Tear down explicitly. env.close() alone leaves the env object
-                # and its TraCI socket alive until the collector happens to run,
-                # which over thousands of episodes exhausts system resources.
-                try:
-                    if env is not None:
-                        env.close()
-                except Exception:
-                    pass
-                _reap_sumo(sumo_before)
-                del env
-                gc.collect()
-                time.sleep(1.5)  # let the OS release the TraCI port
-
                 if ep and ep % 20 == 0:
                     print(f"      [diag] episode {ep}: rss={_rss_mb():.0f}MB "
                           f"sumo={len(_sumo_pids())}")
 
-            col_rate = 100.0 * collisions / N_EVAL_EPISODES
-            success_rate = 100.0 * successes / N_EVAL_EPISODES
+            n_ok = N_EVAL_EPISODES - failed_episodes
+            col_rate = 100.0 * collisions / max(n_ok, 1)
+            success_rate = 100.0 * successes / max(n_ok, 1)
             avg_tt = np.mean(travel_times) if travel_times else 0
             avg_wt = np.mean(waiting_times) if waiting_times else 0
             avg_sp = np.mean(avg_speeds) if avg_speeds else 0
@@ -702,7 +730,8 @@ def evaluate_version(version, model_path=None, out_name=None):
                 "avg_travel_time": avg_tt,
                 "avg_waiting_time": avg_wt,
                 "avg_speed": avg_sp,
-                "n_episodes": N_EVAL_EPISODES,
+                "n_episodes": n_ok,
+                "failed_episodes": failed_episodes,
                 "collisions": collisions,
                 # Zero for every unshielded variant; only the shielded env reports these.
                 "shield_steps": shield_steps,
@@ -933,6 +962,10 @@ if __name__ == "__main__":
     parser.add_argument("--train-profile", default="pipeline", dest="train_profile",
                         choices=["pipeline", "ibrahima"],
                         help="Training environment; ibrahima reproduces v0_1_single_agent.py")
+    parser.add_argument("--eval-profile", default=None, dest="eval_profile", choices=["ibrahima"],
+                        help="Evaluate in the pre-defence training environment (COMPLEX_SCENARIOS)")
+    parser.add_argument("--n-steps", type=int, default=None, dest="n_steps",
+                        help="Rollout length per worker")
     parser.add_argument("--stress", action="store_true",
                         help="Evaluate on STRESS_SCENARIOS instead of SCENARIOS")
     parser.add_argument("--paired-seeds", action="store_true", dest="paired_seeds",
@@ -967,6 +1000,13 @@ if __name__ == "__main__":
         CHECKPOINT_BASE = CHECKPOINT_BASE + "_" + args.train_profile
         TB_DIR = TB_DIR + "_" + args.train_profile
         print(f"  [profile] {TRAIN_PROFILE} -> checkpoints in {CHECKPOINT_BASE}")
+    if args.n_steps is not None:
+        N_STEPS = args.n_steps
+        print(f"  [override] N_STEPS = {N_STEPS}  (batch {N_STEPS * (args.workers or NUM_WORKERS)})")
+    if args.eval_profile:
+        EVAL_PROFILE = args.eval_profile
+        SCENARIOS = COMPLEX_SCENARIOS
+        print(f"  [eval-profile] {EVAL_PROFILE}: {COMPLEX_SCENARIOS}")
     if args.stress:
         SCENARIOS = STRESS_SCENARIOS
         print(f"  [stress] scenarios: {list(SCENARIOS)}")
