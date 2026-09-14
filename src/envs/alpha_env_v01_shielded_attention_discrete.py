@@ -36,6 +36,9 @@ class AlphaEnv_v01_ShieldedAttentionDiscrete(AlphaEnv_v01_AttentionDiscrete):
     ROW_DIST = AlphaEnv_v01_ShieldedAttention.ROW_DIST
     ROW_CROSS = AlphaEnv_v01_ShieldedAttention.ROW_CROSS
     COMMIT_ZONE = AlphaEnv_v01_ShieldedAttention.COMMIT_ZONE
+    REAR_AWARE = AlphaEnv_v01_ShieldedAttention.REAR_AWARE
+    REAR_TIME_GAP = AlphaEnv_v01_ShieldedAttention.REAR_TIME_GAP
+    REAR_MAX_BRAKE = AlphaEnv_v01_ShieldedAttention.REAR_MAX_BRAKE
 
     # _shield_check does not call super(), so it can be bound directly.
     # _compute_telemetry_stats does, and zero-argument super() resolves against

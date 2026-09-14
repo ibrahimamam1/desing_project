@@ -47,6 +47,15 @@ class AlphaEnv_v01_ShieldedAttention(AlphaEnv_v01_Attention):
     # lets it clear instead. Off by default so earlier results reproduce.
     COMMIT_ZONE = _p("SHIELD_COMMIT_ZONE", 0.0)
 
+    # Rear awareness. Braking hard with a vehicle close behind can cause a
+    # rear-end collision, particularly when background vehicles do not brake
+    # (speed_mode 0). When the follower's time gap is below REAR_TIME_GAP, the
+    # shield brakes no harder than REAR_MAX_BRAKE, or the policy's own action
+    # if that is harder. Off by default so earlier results reproduce.
+    REAR_AWARE = _p("SHIELD_REAR_AWARE", 0.0)
+    REAR_TIME_GAP = _p("SHIELD_REAR_TIME_GAP", 1.5)     # s
+    REAR_MAX_BRAKE = _p("SHIELD_REAR_MAX_BRAKE", -1.0)  # m/s2
+
     del _p
 
     def __init__(self, env_params, sim_params, network, simulator='traci'):
@@ -204,6 +213,18 @@ class AlphaEnv_v01_ShieldedAttention(AlphaEnv_v01_Attention):
                         safe_accel = yield_decel
                         if 'row' not in override_reason:
                             override_reason.append('row')
+
+        if self.REAR_AWARE and override_reason and safe_accel < proposed_accel:
+            follower = self.k.vehicle.get_follower(ego_id)
+            if follower and follower in self.k.vehicle.get_ids():
+                gap = self.k.vehicle.get_headway(follower)
+                v_fol = self.k.vehicle.get_speed(follower)
+                if (gap is not None and v_fol is not None and 0 <= gap < 1000
+                        and v_fol > 0.1 and gap / v_fol < self.REAR_TIME_GAP):
+                    floor = min(self.REAR_MAX_BRAKE, proposed_accel)
+                    if safe_accel < floor:
+                        safe_accel = floor
+                        self.shield_stats['rear_limits'] = self.shield_stats.get('rear_limits', 0) + 1
 
         reason_str = '+'.join(override_reason) if override_reason else None
         return safe_accel, reason_str

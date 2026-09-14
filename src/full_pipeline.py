@@ -649,6 +649,7 @@ def evaluate_version(version, model_path=None, out_name=None):
             shield_rss = 0
             shield_row = 0
             shield_commit = 0
+            shield_rear = 0
 
             failed_episodes = 0
 
@@ -711,6 +712,7 @@ def evaluate_version(version, model_path=None, out_name=None):
                     shield_rss += sh.get("rss_overrides", 0)
                     shield_row += sh.get("row_overrides", 0)
                     shield_commit += sh.get("commit_skips", 0)
+                    shield_rear += sh.get("rear_limits", 0)
 
                 if ep and ep % 20 == 0:
                     print(f"      [diag] episode {ep}: rss={_rss_mb():.0f}MB "
@@ -741,6 +743,7 @@ def evaluate_version(version, model_path=None, out_name=None):
                 "shield_rss_overrides": shield_rss,
                 "shield_row_overrides": shield_row,
                 "shield_commit_skips": shield_commit,
+                "shield_rear_limits": shield_rear,
             }
             all_results.append(row)
             append_eval_progress(out_name, row)
