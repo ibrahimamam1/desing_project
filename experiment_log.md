@@ -62,3 +62,16 @@
     - Avg Reward: 
     - Training Time:
 
+
+## 2026-09-14: Shielded PPO extension (v0.1 + shield)
+- **Goal**: Post-decision safety shield on the attention PPO controller (pre-defence report, section 11.2)
+- **Env**: src/envs/alpha_env_v01_shielded_attention_continous.py (TTC, RSS, right-of-way layers)
+- **Pipeline**: src/full_pipeline.py; report in docs/RESULTS.md, tables in docs/results_tables.md
+- **Evaluation**: pre-defence protocol, 6 scenarios x 4 intentions x 42 episodes
+- **Results** (standard benchmark, same weights with shield off / on):
+  - Collision rate: 0.99% -> 0.40% (p = 0.18, not significant)
+  - Travel time: 12.9 s -> 16.3 s
+  - Success rate: 99.0% -> 97.0%
+  - Actions overridden: 18.5% (RSS about 91% of overrides)
+- **Also**: attention vs heuristic confirmed (p < 0.001); shield harms a discrete policy (4 -> 14, p = 0.03)
+- **Next steps**: results in the pre-defence training environment (run_reproduction.sh), shield-aware training

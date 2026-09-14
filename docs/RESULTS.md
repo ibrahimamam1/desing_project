@@ -1,0 +1,208 @@
+# Shielded PPO Extension — Results Report
+
+**Author:** Muntasir Hossain (210041265)
+**Thesis:** Navigating Unsignalised Intersections in Frenet Space with PPO and Attention (CSE 4700, IUT)
+**Scope:** Section 11.2 of the pre-defence report, *Shielded PPO Extension*
+
+Complete numeric tables with confidence intervals and significance tests are in
+[`results_tables.md`](results_tables.md), regenerated from the raw evaluation files by
+`scripts/make_report.py`.
+
+---
+
+## 1. Summary
+
+1. **A three-layer post-decision safety shield was implemented** on top of the
+   attention-based PPO controller: path-based time-to-conflict braking, an RSS safe-distance
+   override, and a right-before-left yielding rule. Every intervention is counted per layer.
+
+2. **On the pre-defence benchmark, the shielded controller recorded 0.40% collisions, below
+   every controller reported in the pre-defence study** (best: Attention + Continuous, 0.88%).
+   In our retrained pipeline, Attention + Discrete also reached 0.40%, and the attention-based
+   controllers are statistically indistinguishable from one another (Section 3.3).
+
+3. **Applied to identical policy weights, the shield reduced collisions from 0.99% to 0.40%**
+   on the standard benchmark. The difference is **not statistically significant** at this
+   sample size (10 vs 4 collisions in 1,008 episodes, p = 0.18), and it did not hold under
+   high-flow traffic.
+
+4. **The shield costs efficiency.** Travel time rose from 12.9 s to 16.3 s and success rate fell
+   from 99.0% to 97.0%, with 18.5% of actions overridden. The RSS layer produced about 91% of
+   interventions.
+
+5. **Attention-based control clearly outperforms heuristic control** (p < 0.001), confirming
+   the central finding of the pre-defence study with 8,000+ new evaluation episodes.
+
+---
+
+## 2. Environment
+
+### 2.1 Evaluation environment: identical to the pre-defence study
+
+All results are measured with the pre-defence evaluation protocol from
+`src/test/v0_1_evaluate.py`:
+
+| Setting | Value |
+|---|---|
+| Network | `100m_right_before_left.net.xml`, 4-way unsignalised junction |
+| Traffic scenarios | Sc1–Sc6 at 150 / 275 / 400 veh/h, same compositions |
+| Intention settings | All straight, all left, uniform random, asymmetric random |
+| Episodes per configuration | 42 (1,008 per controller) |
+| Background vehicles | IDM, `speed_mode` 31 |
+| RL vehicle spawn probability | 0.8 |
+| Policy at evaluation | Deterministic |
+| Simulation | `sim_step` 0.25 s, horizon 180 |
+
+### 2.2 Training environment
+
+The models in Sections 3.2–3.5 were trained in a revised pipeline whose training
+environment differs from the pre-defence training script, `src/configs/v0_1_single_agent.py`:
+
+| Training setting | Pre-defence | Revised pipeline |
+|---|---|---|
+| Cross traffic | 400 veh/h (N, S, E) | 275 veh/h |
+| Background traffic in the agent's lane | 275 veh/h | none |
+| Background vehicle `speed_mode` | 0 | 31 |
+| RL spawn probability | 0.3 | 0.8 |
+| Environment warmup | 5 steps | 50 steps |
+| PPO hyperparameters, 1.5M steps, 8 workers | — | identical |
+
+The revised pipeline therefore trains on an easier task. To remove this difference, every
+controller is being **retrained in the pre-defence training environment**
+(`--train-profile ibrahima`) and evaluated on the same benchmark. Those results are added
+automatically to Section A of `results_tables.md` as each run completes. The only difference
+that remains is the three leader features (gap, leader speed, leader TTC) added to the
+observation after the pre-defence report.
+
+---
+
+## 3. Results
+
+### 3.1 Comparison with the pre-defence study
+
+![Collision rate on the pre-defence benchmark](../experiments/submission/cross_study_collision.png)
+
+| Rank | Controller | Mean collision rate | Source |
+|---|---|---|---|
+| 1 | Heuristic + Continuous | 6.73% | Pre-defence report, Figure 9.2 |
+| 2 | Heuristic + Discrete | 5.31% | Pre-defence report, Figure 9.2 |
+| 3 | Attention + Discrete | 1.83% | Pre-defence report, Figure 9.2 |
+| 4 | Attention + Continuous | 0.88% | Pre-defence report, Figure 9.2 |
+| 5 | **Attention + Continuous + Shield** | **0.40%** | This work |
+
+Per scenario, the shielded controller was lower than the pre-defence Attention + Continuous
+result in four of six scenarios. The baselines are the values reported in the pre-defence
+study; the shielded controller was evaluated on the same benchmark but trained in the revised
+pipeline (Section 2.2). The difference from 0.88% is not statistically significant
+(approximately 9 vs 4 collisions, p ≈ 0.27).
+
+### 3.2 Controlled shield evaluation
+
+To isolate the shield, the same trained Attention + Continuous policy was evaluated with the
+shield off and on.
+
+| | Shield off | Shield on | Change |
+|---|---|---|---|
+| Collision rate | 0.99% | **0.40%** | −60% |
+| Success rate | 99.0% | 97.0% | −2.0 pts |
+| Travel time | 12.9 s | 16.3 s | +3.4 s |
+| Waiting time | 0.11 s | 2.99 s | +2.9 s |
+| Actions overridden | — | 18.5% | |
+
+10 vs 4 collisions, p = 0.18.
+
+Override breakdown: TTC 1,352 · RSS 13,399 · right-of-way 17.
+
+### 3.3 All controllers, revised pipeline
+
+![Collision rates with 95% confidence intervals](../experiments/submission/revised_pipeline_ci.png)
+
+| Controller | Collision rate | 95% CI |
+|---|---|---|
+| Heuristic + Discrete | 3.97% | 2.93–5.36% |
+| Heuristic + Continuous | 3.17% | 2.26–4.45% |
+| Attention + Continuous | 0.99% | 0.54–1.82% |
+| Attention + Discrete | 0.40% | 0.15–1.02% |
+| Attention + Continuous + Shield | 0.40% | 0.15–1.02% |
+
+The results form two tiers. Heuristic controllers are significantly worse than attention
+controllers (p < 0.001). The three attention-based controllers are **statistically
+indistinguishable** from one another (all pairwise p ≥ 0.17), so no ranking within that tier
+is claimed.
+
+### 3.4 High-flow traffic
+
+The attention controllers were also evaluated at 550, 700 and 850 veh/h per approach, with
+identical traffic across controllers.
+
+| Controller | Collision rate |
+|---|---|
+| Heuristic + Discrete | 3.97% |
+| Heuristic + Continuous | 3.77% |
+| Attention + Continuous | 0.60% |
+| Attention + Discrete | 0.40% |
+| Attention + Continuous + Shield | 1.39% |
+| Attention + Continuous + Shield + commit zone | 1.19% |
+
+Under high flow the shield did not reduce collisions (3 vs 7, p = 0.34). Across both traffic
+conditions combined the shield effect is 13 vs 11 collisions (p = 0.84). Higher nominal flow
+did not raise collision rates for any controller, most likely because congested approaches
+cap how many vehicles SUMO can insert, so these scenarios were not substantially harder.
+
+### 3.5 Shield diagnostics
+
+- **RSS drives most interventions.** Its trigger distance, `v·t_react + v²/(2·a_brake) + gap`,
+  is 19 m at 10 m/s and 35 m at 15 m/s, beyond the 30 m perception radius. At typical
+  approach speeds it is therefore active across the whole perceived approach, which explains
+  the override rate and the travel-time cost.
+- **The right-of-way layer rarely fires** (17 of 14,768 overrides), because its three
+  conditions must hold simultaneously.
+- **The shield harms a discrete-action policy.** Applied to Attention + Discrete it raised
+  collisions from 4 to 14 (p = 0.03). Five fixed acceleration levels cannot absorb
+  fine-grained interventions, which is why the shield is paired with continuous control.
+- **A commit zone** (no braking once the vehicle can no longer stop before the conflict point)
+  cut overrides from 20.3% to 12.4% and travel time by 1.6 s, without improving safety.
+
+---
+
+## 4. Limitations
+
+- **Sample size.** At collision rates below 1%, differences of a few collisions cannot be
+  resolved with 1,008 episodes. The shield's improvement on the standard benchmark is
+  suggestive, not established.
+- **Training environment.** The results in Section 3 come from a training environment easier
+  than the pre-defence one (Section 2.2). The reproduction in the pre-defence training
+  environment addresses this.
+- **Single training seed** per controller.
+- **High-flow scenarios** did not increase difficulty as intended.
+- **Extended training** of Attention + Continuous to 3M steps raised the learning rate on
+  resume from 1e-5 to 1.5e-4, so it does not cleanly test whether longer training helps.
+
+## 5. Future work
+
+- Shield-aware training, so the policy learns to operate with interventions.
+- Calibrating the RSS trigger distance to the perception radius.
+- Multiple seeds and larger evaluation budgets to resolve differences below 1%.
+- Stress scenarios that raise conflict density rather than nominal inflow.
+
+---
+
+## 6. Reproducing these results
+
+See [`SETUP.md`](../SETUP.md) for environment setup.
+
+```bash
+# Revised pipeline (Section 3)
+./run_training.sh
+python src/full_pipeline.py --mode eval
+
+# Controlled shield evaluation (Section 3.2)
+python src/full_pipeline.py --mode eval --version shielded_attention_continous \
+       --policy-from attention_continous
+
+# Pre-defence training environment (Section A of results_tables.md)
+./run_reproduction.sh
+
+# Regenerate every table and figure
+python scripts/make_report.py
+```
