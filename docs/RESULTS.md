@@ -16,11 +16,12 @@ Complete numeric tables with confidence intervals and significance tests are in
    attention-based PPO controller: path-based time-to-conflict braking, an RSS safe-distance
    override, and a right-before-left yielding rule. Every intervention is counted per layer.
 
-2. **In the pre-defence environment, used for both training and evaluation, the shield
-   significantly increased collisions.** Without the shield the controller collided in 6.35%
-   of episodes. With the shield it was 9.72% (p = 0.007), and with the rear-aware variant 9.42%
-   (p = 0.013). Background vehicles in that environment do not brake, so shield braking causes
-   rear-end collisions, and capping the braking trades those for crossing conflicts
+2. **In the pre-defence environment, used for both training and evaluation, the original
+   shield significantly increased collisions**: 6.35% without it, 9.72% with it (p = 0.007).
+   Background vehicles there do not brake, so shield braking causes rear-end collisions.
+   **Combining rear-aware braking with a commit zone removed that harm**: 6.35%, identical to
+   the controller without a shield (p = 1.00), with 2.9% of actions overridden. That variant is
+   significantly safer than the original shield (p = 0.007) but not safer than no shield
    (Section 3.6).
 
 3. **On the pre-defence benchmark, with the revised training pipeline, the shielded controller
@@ -37,11 +38,13 @@ Complete numeric tables with confidence intervals and significance tests are in
 5. **Attention-based control clearly outperforms heuristic control** (p < 0.001), confirming
    the central finding of the pre-defence study with 8,000+ new evaluation episodes.
 
-6. **Conclusion for Section 11.2.** A braking-only post-decision shield did not improve safety
-   for this attention-based PPO controller. It helped slightly and not significantly in the
-   benign benchmark, and it harmed significantly in the aggressive pre-defence environment,
-   where the policy learned to keep moving through traffic that does not yield. This points to
-   shield-aware training, in which the policy learns with the shield active, as the next step.
+6. **Conclusion for Section 11.2.** A post-decision shield did not yield a measurable safety
+   gain for this attention-based PPO controller. In the benign benchmark it helped slightly and
+   not significantly. In the aggressive pre-defence environment the original design harmed
+   significantly, because braking in front of traffic that does not yield causes rear-end
+   collisions. Adding rear awareness and a commit zone made the shield safety-neutral at a
+   modest efficiency cost. Shield-aware training, in which the policy learns with the shield
+   active, is the natural next step toward a net improvement.
 
 ---
 
@@ -200,16 +203,26 @@ Attention + Continuous was trained and evaluated in the pre-defence environment 
 | Attention + Continuous | **6.35%** | 5.00–8.03% | 92.1% | 21.5 s | — |
 | + Shield | 9.72% | 8.04–11.71% | 85.7% | 26.7 s | 8.8% |
 | + Shield, rear-aware | 9.42% | 7.77–11.39% | 86.4% | 26.5 s | 8.0% |
+| + Shield, rear-aware + commit zone | **6.35%** | 5.00–8.03% | 91.1% | 23.3 s | 2.9% |
 
-Shield vs no shield: 64 vs 98 collisions, p = 0.007. Rear-aware vs no shield: 64 vs 95,
-p = 0.013.
+| Comparison | Collisions | p |
+|---|---|---|
+| No shield vs shield | 64 vs 98 | 0.007 |
+| No shield vs rear-aware | 64 vs 95 | 0.013 |
+| No shield vs rear-aware + commit zone | 64 vs 64 | 1.00 |
+| Shield vs rear-aware + commit zone | 98 vs 64 | 0.007 |
 
-By intention, the damage concentrates in left turns:
+By intention, 252 episodes each:
 
-| Intention | No shield | Shield | Rear-aware |
-|---|---|---|---|
-| All straight | 1.2% | 1.6% | 2.8% |
-| All left | 11.1% | 23.8% | 19.4% |
+| Intention | No shield | Shield | Rear-aware | Rear-aware + commit zone |
+|---|---|---|---|---|
+| All straight | 1.2% | 1.6% | 2.8% | 0.8% |
+| All left | 11.1% | 23.8% | 19.4% | 14.3% |
+| Uniform random | 6.3% | 9.5% | 9.5% | 4.4% |
+| Asymmetric random | 6.7% | 4.0% | 6.0% | 6.0% |
+
+The rear-aware + commit zone variant is lower than no shield on three intentions and higher on
+all-left; none of these per-intention differences is significant (all p ≥ 0.35).
 
 **Why the shield hurts here.** In this environment background vehicles use `speed_mode` 0 and
 do not brake for the agent. The controller trained there learned to keep moving through traffic
@@ -220,9 +233,12 @@ variant caps shield braking when a follower is close; it removed some rear-end c
 (60 → 49 on left turns) but prevented the shield from braking for genuine crossing conflicts,
 so the total barely changed.
 
-A further variant combining rear awareness with the commit zone was run afterwards as a
-follow-up; its result is in Section D of [`results_tables.md`](results_tables.md). It is reported
-alongside the others rather than in place of them.
+**Rear awareness plus commit zone.** The commit zone stops the shield braking once the agent
+can no longer stop before the conflict point, which removes most braking inside the junction
+where rear-end collisions occurred. Combined with rear awareness, overrides fell from 8.8% to
+2.9% and collisions returned to the no-shield level. This variant was designed as a follow-up
+after the failures above were observed, and it is reported alongside the others rather than in
+place of them.
 
 ---
 
