@@ -122,7 +122,8 @@ def table(title, entries, note=None):
 
 def pair(title, a, b):
     if a and b:
-        w(f"- {title}: {a['c']} vs {b['c']} collisions, p = {fisher(a['c'], b['c'], a['n'], b['n']):.3f}")
+        w(f"- {title}: {a['c']}/{a['n']} vs {b['c']}/{b['n']} collisions, "
+          f"p = {fisher(a['c'], b['c'], a['n'], b['n']):.3f}")
 
 
 w("# Results tables\n")

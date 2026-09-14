@@ -35,10 +35,10 @@ Models trained with the default profile: 275 veh/h cross traffic, no background 
 
 Significance, standard benchmark:
 
-- Shield on Attention + Continuous: 10 vs 4 collisions, p = 0.178
-- Shield on Attention + Discrete: 4 vs 14 collisions, p = 0.030
-- Attention + Discrete vs Attention + Continuous: 4 vs 10 collisions, p = 0.178
-- Heuristic + Continuous vs Attention + Continuous: 32 vs 10 collisions, p = 0.001
+- Shield on Attention + Continuous: 10/1008 vs 4/1008 collisions, p = 0.178
+- Shield on Attention + Discrete: 4/1008 vs 14/1008 collisions, p = 0.030
+- Attention + Discrete vs Attention + Continuous: 4/1008 vs 10/1008 collisions, p = 0.178
+- Heuristic + Continuous vs Attention + Continuous: 32/1008 vs 10/1008 collisions, p = 0.001
 
 ### B2. High-flow traffic (550/700/850 veh/h, identical traffic across variants)
 
@@ -55,7 +55,7 @@ Higher nominal flow did not raise collision rates, most likely because congested
 
 Significance, high-flow:
 
-- Shield on Attention + Continuous: 3 vs 7 collisions, p = 0.341
+- Shield on Attention + Continuous: 3/504 vs 7/504 collisions, p = 0.341
 - Shield on Attention + Continuous, all conditions combined: 13 vs 11 collisions, p = 0.838
 
 ### B3. Extended training of Attention + Continuous to 3M steps
@@ -84,10 +84,10 @@ Attention + Continuous trained with `--train-profile ibrahima` and evaluated wit
 
 Rear-aware settings were fixed before evaluation: follower time gap 1.5 s, shield braking capped at -1.0 m/s2 when a follower is closer than that.
 
-- Shield: 64 vs 98 collisions, p = 0.007
-- Rear-aware shield: 64 vs 95 collisions, p = 0.013
-- Rear-aware + commit-zone shield: 64 vs 64 collisions, p = 1.000
-- Shield-aware training: 64 vs 64 collisions, p = 0.000
+- Shield: 64/1008 vs 98/1008 collisions, p = 0.007
+- Rear-aware shield: 64/1008 vs 95/1008 collisions, p = 0.013
+- Rear-aware + commit-zone shield: 64/1008 vs 64/1008 collisions, p = 1.000
+- Shield-aware training: 64/1008 vs 64/504 collisions, p = 0.000
 
 ## C. Comparison with the pre-defence study
 

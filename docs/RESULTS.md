@@ -21,8 +21,9 @@ Complete numeric tables with confidence intervals and significance tests are in
    Background vehicles there do not brake, so shield braking causes rear-end collisions.
    **Combining rear-aware braking with a commit zone removed that harm**: 6.35%, identical to
    the controller without a shield (p = 1.00), with 2.9% of actions overridden. That variant is
-   significantly safer than the original shield (p = 0.007) but not safer than no shield
-   (Section 3.6).
+   significantly safer than the original shield (p = 0.007) but not safer than no shield.
+   A controller trained with that shield active collided in 12.70% of episodes, but it was
+   stopped at 824k training steps against 1.5M, so that result is inconclusive (Section 3.6).
 
 3. **On the pre-defence benchmark, with the revised training pipeline, the shielded controller
    recorded 0.40% collisions**, below every controller reported in the pre-defence study (best:
@@ -43,8 +44,9 @@ Complete numeric tables with confidence intervals and significance tests are in
    not significantly. In the aggressive pre-defence environment the original design harmed
    significantly, because braking in front of traffic that does not yield causes rear-end
    collisions. Adding rear awareness and a commit zone made the shield safety-neutral at a
-   modest efficiency cost. Shield-aware training, in which the policy learns with the shield
-   active, is the natural next step toward a net improvement.
+   modest efficiency cost. A first attempt at shield-aware training, cut short by the deadline,
+   did not improve safety; a full-length run with a matched unshielded baseline is the next
+   step.
 
 ---
 
@@ -204,6 +206,11 @@ Attention + Continuous was trained and evaluated in the pre-defence environment 
 | + Shield | 9.72% | 8.04–11.71% | 85.7% | 26.7 s | 8.8% |
 | + Shield, rear-aware | 9.42% | 7.77–11.39% | 86.4% | 26.5 s | 8.0% |
 | + Shield, rear-aware + commit zone | **6.35%** | 5.00–8.03% | 91.1% | 23.3 s | 2.9% |
+| Shield-aware training (824k steps)¹ | 12.70% | 10.07–15.89% | 86.7% | 21.3 s | 5.0% |
+
+¹ Trained with the rear-aware + commit-zone shield active and evaluated with it, 504 episodes.
+Training was stopped at 824k steps for the submission deadline, against 1.5M for the other
+rows, so this row is not a like-for-like comparison.
 
 | Comparison | Collisions | p |
 |---|---|---|
@@ -239,6 +246,15 @@ where rear-end collisions occurred. Combined with rear awareness, overrides fell
 2.9% and collisions returned to the no-shield level. This variant was designed as a follow-up
 after the failures above were observed, and it is reported alongside the others rather than in
 place of them.
+
+**Shield-aware training.** To let the policy learn to operate with interventions,
+Attention + Continuous was trained with the rear-aware + commit-zone shield active, using the
+same training settings. At 824k steps it collided in 12.70% of episodes, significantly more than
+the unshielded controller (p < 0.001) and worse on every intention. Training had to stop at
+824k steps against 1.5M for the unshielded model, and no unshielded checkpoint at a matching
+step count was available, so the effect of training with the shield cannot be separated from
+the effect of the shorter training. This result is preliminary and does not show that
+shield-aware training improves safety.
 
 ---
 
