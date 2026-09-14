@@ -208,6 +208,30 @@ ext = table("B3. Extended training of Attention + Continuous to 3M steps", [
 ], note="Resuming training recomputed the learning-rate schedule from the new total, raising the "
         "learning rate from 1e-5 to 1.5e-4 on resume, so this is not a clean test of longer training.")
 
+# ---- pre-defence environment for both training and evaluation ----
+w("## D. Pre-defence environment for training and evaluation\n")
+w("Attention + Continuous trained with `--train-profile ibrahima` and evaluated with "
+  "`--eval-profile ibrahima`, so training and evaluation both use the environment of "
+  "`src/configs/v0_1_single_agent.py`: 400 veh/h cross traffic, 275 veh/h background traffic "
+  "in the agent's lane, background vehicles that ignore SUMO safety checks (speed_mode 0), "
+  "RL spawn probability 0.3 and a 5-step warmup. 4 intention settings x 252 episodes "
+  "(1,008 per controller). Training used 24 workers with a rollout of 341 steps, keeping the "
+  "batch at 8,184 samples against 8,192 in the original. The observation includes the three "
+  "leader features added after the pre-defence report.\n")
+cx = table("D1. Pre-defence environment", [
+    ("Attention + Continuous", "attention_continous__policy_attention_continous__complex"),
+    ("Attention + Continuous + Shield", "shielded_attention_continous__policy_attention_continous__complex"),
+    ("Attention + Continuous + Shield (rear-aware)", "shielded_attention_continous__policy_attention_continous__complex_rear"),
+], note="Rear-aware settings were fixed before evaluation: follower time gap 1.5 s, "
+        "shield braking capped at -1.0 m/s2 when a follower is closer than that.")
+if cx:
+    pair("Shield", cx.get("Attention + Continuous"), cx.get("Attention + Continuous + Shield"))
+    pair("Rear-aware shield", cx.get("Attention + Continuous"),
+         cx.get("Attention + Continuous + Shield (rear-aware)"))
+    w("")
+else:
+    w("_These runs have not finished yet._\n")
+
 # ---- cross-study ----
 w("## C. Comparison with the pre-defence study\n")
 w("| Controller | Mean collision rate | Source |")
@@ -270,6 +294,7 @@ def fig_ci(got, name, title):
 fig_cross()
 fig_ci(std, "revised_pipeline_ci.png", "Revised training pipeline, standard benchmark")
 fig_ci(repro, "predefence_env_ci.png", "Pre-defence training environment, standard benchmark")
+fig_ci(cx, "predefence_env_both_ci.png", "Pre-defence environment for training and evaluation")
 
 print("wrote docs/results_tables.md")
 print("figures:", sorted(f for f in os.listdir(FIG) if f.endswith(".png")))
