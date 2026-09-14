@@ -80,12 +80,14 @@ Attention + Continuous trained with `--train-profile ibrahima` and evaluated wit
 | Attention + Continuous + Shield | 9.72% | 8.04-11.71% | 98/1008 | 85.7% | 26.7 s | 8.8% |
 | Attention + Continuous + Shield (rear-aware) | 9.42% | 7.77-11.39% | 95/1008 | 86.4% | 26.5 s | 8.0% |
 | Attention + Continuous + Shield (rear-aware + commit zone) | 6.35% | 5.00-8.03% | 64/1008 | 91.1% | 23.3 s | 2.9% |
+| Shield-aware training: trained and evaluated with rear-aware + commit-zone shield | 12.70% | 10.07-15.89% | 64/504 | 86.7% | 21.3 s | 5.0% |
 
 Rear-aware settings were fixed before evaluation: follower time gap 1.5 s, shield braking capped at -1.0 m/s2 when a follower is closer than that.
 
 - Shield: 64 vs 98 collisions, p = 0.007
 - Rear-aware shield: 64 vs 95 collisions, p = 0.013
 - Rear-aware + commit-zone shield: 64 vs 64 collisions, p = 1.000
+- Shield-aware training: 64 vs 64 collisions, p = 0.000
 
 ## C. Comparison with the pre-defence study
 
