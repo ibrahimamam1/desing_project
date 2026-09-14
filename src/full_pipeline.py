@@ -152,7 +152,7 @@ horizon = 180; warmup_steps = 50  # Match teammate: 50-step warmup for realistic
 # ═══════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════
-def _make_vehicles():
+def _make_vehicles(nonrl_speed_mode=31):
     vehicles = VehicleParams()
     # RL vehicle: speed_mode=0 so PPO has full control over acceleration
     rl_cfp = SumoCarFollowingParams(speed_mode=0, accel=max_accel, decel=max_decel,
@@ -160,7 +160,7 @@ def _make_vehicles():
         speed_factor=1.0, speed_dev=0.1, impatience=0.0, car_follow_model="IDM")
     # NonRL vehicles: speed_mode=31 so they respect traffic rules (braking, yielding)
     # This matches teammate's setup for a fair comparison
-    nonrl_cfp = SumoCarFollowingParams(speed_mode=31, accel=max_accel, decel=max_decel,
+    nonrl_cfp = SumoCarFollowingParams(speed_mode=nonrl_speed_mode, accel=max_accel, decel=max_decel,
         sigma=0, tau=0.8, min_gap=2.5, max_speed=max_speed,
         speed_factor=1.0, speed_dev=0.1, impatience=0.0, car_follow_model="IDM")
     vehicles.add(veh_id="RL", acceleration_controller=(RLController, {}),
@@ -173,22 +173,38 @@ def _make_vehicles():
 
 RL_EDGE = "E#L-X"   # west approach, reserved for the RL vehicle
 
-def _make_inflow(rates):
+def _make_inflow(rates, rl_edge_traffic=False, rl_prob=0.8):
     inflow = InFlows()
     # Background traffic on the three approaches the agent does not spawn on.
     # v0_1_evaluate.py leaves the RL edge clear; filling it too put NonRL cars
     # directly ahead of and behind the agent in its own lane, which is a
     # different problem from the one chapter 9 measures.
     for d, edge in DIR_MAP.items():
-        if edge == RL_EDGE:
+        if edge == RL_EDGE and not rl_edge_traffic:
             continue
         inflow.add(veh_type="NonRL", edge=edge, probability=rates[d]/3600,
                    depart_lane=0, depart_speed=0, begin=1, color="green")
-    inflow.add(veh_type="RL", edge=RL_EDGE, probability=0.8,
+    inflow.add(veh_type="RL", edge=RL_EDGE, probability=rl_prob,
                depart_lane=0, depart_speed=0, begin=warmup_steps, color="green")
     return inflow
 
-def _make_flow_params(network_cls, rates):
+# Training environments. "pipeline" is what every result so far was trained on.
+# "ibrahima" reproduces src/configs/v0_1_single_agent.py, which produced the
+# pre-defence figures: denser cross traffic, background traffic in the agent's
+# own lane, background vehicles that ignore SUMO safety checks, RL spawn
+# probability 0.3 and a 5-step warmup. Evaluation is unaffected by the profile.
+TRAIN_PROFILES = {
+    "pipeline": dict(rates={"N": 275, "S": 275, "W": 275, "E": 275},
+                     rl_edge_traffic=False, rl_prob=0.8, nonrl_speed_mode=31,
+                     warmup=None),
+    "ibrahima": dict(rates={"N": 400, "S": 400, "W": 275, "E": 400},
+                     rl_edge_traffic=True, rl_prob=0.3, nonrl_speed_mode=0,
+                     warmup=5),
+}
+TRAIN_PROFILE = "pipeline"
+
+def _make_flow_params(network_cls, rates, profile=None):
+    prof = TRAIN_PROFILES[profile] if profile else None
     return dict(
         network=network_cls, sim=SumoParams(
             port=None, sim_step=sim_step, lateral_resolution=None,
@@ -198,9 +214,11 @@ def _make_flow_params(network_cls, rates):
             num_clients=1, color_by_speed=False, use_ballistic=False),
         env=EnvParams(additional_params={"max_accel": max_accel, "max_decel": max_decel,
             "target_velocity": max_speed, "sort_vehicles": False},
-            horizon=horizon, warmup_steps=warmup_steps, sims_per_step=1, evaluate=False, clip_actions=True),
-        net=NetParams(osm_path=None, template=NET_FILE, inflows=_make_inflow(rates)),
-        veh=_make_vehicles(),
+            horizon=horizon, warmup_steps=(prof["warmup"] if prof and prof["warmup"] is not None else warmup_steps), sims_per_step=1, evaluate=False, clip_actions=True),
+        net=NetParams(osm_path=None, template=NET_FILE, inflows=(
+            _make_inflow(rates, rl_edge_traffic=prof["rl_edge_traffic"], rl_prob=prof["rl_prob"])
+            if prof else _make_inflow(rates))),
+        veh=_make_vehicles(prof["nonrl_speed_mode"]) if prof else _make_vehicles(),
         initial=InitialConfig(shuffle=False, spacing="uniform", min_gap=12,
             perturbation=5.0, x0=5, bunching=0, lanes_distribution=float("inf"),
             edges_distribution=["E#D-X", "E#L-X", "E#R-X", "E#T-X"]),
@@ -352,8 +370,9 @@ def train_version(version, extend=False):
     prune_checkpoints(ckpt_dir)
 
     # Default training uses uniform_random with medium traffic
-    train_rates = {"N": 275, "S": 275, "W": 275, "E": 275}
-    fp = _make_flow_params(UniformRandomNetwork, train_rates)
+    train_rates = TRAIN_PROFILES[TRAIN_PROFILE]["rates"]
+    fp = _make_flow_params(UniformRandomNetwork, train_rates, profile=TRAIN_PROFILE)
+    print(f"  training profile: {TRAIN_PROFILE}  {TRAIN_PROFILES[TRAIN_PROFILE]}")
     EnvClass = _get_env_class(version)
 
     def make_env():
@@ -911,6 +930,9 @@ if __name__ == "__main__":
     parser.add_argument("--extend", action="store_true",
                         help="Continue training a variant that already finished, "
                              "up to the --timesteps total")
+    parser.add_argument("--train-profile", default="pipeline", dest="train_profile",
+                        choices=["pipeline", "ibrahima"],
+                        help="Training environment; ibrahima reproduces v0_1_single_agent.py")
     parser.add_argument("--stress", action="store_true",
                         help="Evaluate on STRESS_SCENARIOS instead of SCENARIOS")
     parser.add_argument("--paired-seeds", action="store_true", dest="paired_seeds",
@@ -940,6 +962,11 @@ if __name__ == "__main__":
         NUM_WORKERS = args.workers
         print(f"  [override] NUM_WORKERS = {NUM_WORKERS}")
 
+    if args.train_profile != "pipeline":
+        TRAIN_PROFILE = args.train_profile
+        CHECKPOINT_BASE = CHECKPOINT_BASE + "_" + args.train_profile
+        TB_DIR = TB_DIR + "_" + args.train_profile
+        print(f"  [profile] {TRAIN_PROFILE} -> checkpoints in {CHECKPOINT_BASE}")
     if args.stress:
         SCENARIOS = STRESS_SCENARIOS
         print(f"  [stress] scenarios: {list(SCENARIOS)}")
