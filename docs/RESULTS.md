@@ -16,22 +16,32 @@ Complete numeric tables with confidence intervals and significance tests are in
    attention-based PPO controller: path-based time-to-conflict braking, an RSS safe-distance
    override, and a right-before-left yielding rule. Every intervention is counted per layer.
 
-2. **On the pre-defence benchmark, the shielded controller recorded 0.40% collisions, below
-   every controller reported in the pre-defence study** (best: Attention + Continuous, 0.88%).
-   In our retrained pipeline, Attention + Discrete also reached 0.40%, and the attention-based
-   controllers are statistically indistinguishable from one another (Section 3.3).
+2. **In the pre-defence environment, used for both training and evaluation, the shield
+   significantly increased collisions.** Without the shield the controller collided in 6.35%
+   of episodes. With the shield it was 9.72% (p = 0.007), and with the rear-aware variant 9.42%
+   (p = 0.013). Background vehicles in that environment do not brake, so shield braking causes
+   rear-end collisions, and capping the braking trades those for crossing conflicts
+   (Section 3.6).
 
-3. **Applied to identical policy weights, the shield reduced collisions from 0.99% to 0.40%**
-   on the standard benchmark. The difference is **not statistically significant** at this
-   sample size (10 vs 4 collisions in 1,008 episodes, p = 0.18), and it did not hold under
-   high-flow traffic.
+3. **On the pre-defence benchmark, with the revised training pipeline, the shielded controller
+   recorded 0.40% collisions**, below every controller reported in the pre-defence study (best:
+   Attention + Continuous, 0.88%). Applied to identical policy weights, the shield reduced
+   collisions from 0.99% to 0.40%, which is **not statistically significant** (p = 0.18), and
+   the reduction did not hold under high-flow traffic. In the same pipeline Attention + Discrete
+   also reached 0.40%.
 
-4. **The shield costs efficiency.** Travel time rose from 12.9 s to 16.3 s and success rate fell
-   from 99.0% to 97.0%, with 18.5% of actions overridden. The RSS layer produced about 91% of
-   interventions.
+4. **The shield costs efficiency in every setting.** On the benchmark, travel time rose from
+   12.9 s to 16.3 s. In the pre-defence environment it rose from 21.5 s to 26.7 s and success
+   rate fell from 92.1% to 85.7%. The RSS layer produced most interventions.
 
 5. **Attention-based control clearly outperforms heuristic control** (p < 0.001), confirming
    the central finding of the pre-defence study with 8,000+ new evaluation episodes.
+
+6. **Conclusion for Section 11.2.** A braking-only post-decision shield did not improve safety
+   for this attention-based PPO controller. It helped slightly and not significantly in the
+   benign benchmark, and it harmed significantly in the aggressive pre-defence environment,
+   where the policy learned to keep moving through traffic that does not yield. This points to
+   shield-aware training, in which the policy learns with the shield active, as the next step.
 
 ---
 
@@ -180,6 +190,40 @@ cap how many vehicles SUMO can insert, so these scenarios were not substantially
 - **A commit zone** (no braking once the vehicle can no longer stop before the conflict point)
   cut overrides from 20.3% to 12.4% and travel time by 1.6 s, without improving safety.
 
+### 3.6 Pre-defence environment for training and evaluation
+
+Attention + Continuous was trained and evaluated in the pre-defence environment (Section 2.3):
+4 intention settings, 252 episodes each, 1,008 per controller.
+
+| Controller | Collision rate | 95% CI | Success | Travel time | Overrides |
+|---|---|---|---|---|---|
+| Attention + Continuous | **6.35%** | 5.00–8.03% | 92.1% | 21.5 s | — |
+| + Shield | 9.72% | 8.04–11.71% | 85.7% | 26.7 s | 8.8% |
+| + Shield, rear-aware | 9.42% | 7.77–11.39% | 86.4% | 26.5 s | 8.0% |
+
+Shield vs no shield: 64 vs 98 collisions, p = 0.007. Rear-aware vs no shield: 64 vs 95,
+p = 0.013.
+
+By intention, the damage concentrates in left turns:
+
+| Intention | No shield | Shield | Rear-aware |
+|---|---|---|---|
+| All straight | 1.2% | 1.6% | 2.8% |
+| All left | 11.1% | 23.8% | 19.4% |
+
+**Why the shield hurts here.** In this environment background vehicles use `speed_mode` 0 and
+do not brake for the agent. The controller trained there learned to keep moving through traffic
+that does not yield. The shield's only intervention is braking, so when it slows the agent in
+front of such traffic the agent is struck from behind. Left turns expose the agent to the most
+conflicts and receive the most braking, which is why they deteriorate most. The rear-aware
+variant caps shield braking when a follower is close; it removed some rear-end collisions
+(60 → 49 on left turns) but prevented the shield from braking for genuine crossing conflicts,
+so the total barely changed.
+
+A further variant combining rear awareness with the commit zone was run afterwards as a
+follow-up; its result is in Section D of [`results_tables.md`](results_tables.md). It is reported
+alongside the others rather than in place of them.
+
 ---
 
 ## 4. Limitations
@@ -187,9 +231,12 @@ cap how many vehicles SUMO can insert, so these scenarios were not substantially
 - **Sample size.** At collision rates below 1%, differences of a few collisions cannot be
   resolved with 1,008 episodes. The shield's improvement on the standard benchmark is
   suggestive, not established.
-- **Training environment.** The results in Section 3 come from a training environment easier
-  than the pre-defence one (Section 2.2). The reproduction in the pre-defence training
-  environment addresses this.
+- **Training environment.** Sections 3.1–3.5 use a training environment easier than the
+  pre-defence one (Section 2.2). Section 3.6 removes this difference for Attention + Continuous
+  only; the other controllers were not retrained in the pre-defence environment.
+- **Shield variants in Section 3.6.** The rear-aware and commit-zone variants were motivated by
+  failures observed in that environment, so they are follow-up designs rather than
+  pre-registered hypotheses. All variants run are reported.
 - **Single training seed** per controller.
 - **High-flow scenarios** did not increase difficulty as intended.
 - **Extended training** of Attention + Continuous to 3M steps raised the learning rate on

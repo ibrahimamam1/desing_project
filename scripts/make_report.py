@@ -222,12 +222,15 @@ cx = table("D1. Pre-defence environment", [
     ("Attention + Continuous", "attention_continous__policy_attention_continous__complex"),
     ("Attention + Continuous + Shield", "shielded_attention_continous__policy_attention_continous__complex"),
     ("Attention + Continuous + Shield (rear-aware)", "shielded_attention_continous__policy_attention_continous__complex_rear"),
+    ("Attention + Continuous + Shield (rear-aware + commit zone)", "shielded_attention_continous__policy_attention_continous__complex_commit_rear"),
 ], note="Rear-aware settings were fixed before evaluation: follower time gap 1.5 s, "
         "shield braking capped at -1.0 m/s2 when a follower is closer than that.")
 if cx:
     pair("Shield", cx.get("Attention + Continuous"), cx.get("Attention + Continuous + Shield"))
     pair("Rear-aware shield", cx.get("Attention + Continuous"),
          cx.get("Attention + Continuous + Shield (rear-aware)"))
+    pair("Rear-aware + commit-zone shield", cx.get("Attention + Continuous"),
+         cx.get("Attention + Continuous + Shield (rear-aware + commit zone)"))
     w("")
 else:
     w("_These runs have not finished yet._\n")
