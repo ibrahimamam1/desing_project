@@ -68,6 +68,19 @@ Significance, high-flow:
 
 Resuming training recomputed the learning-rate schedule from the new total, raising the learning rate from 1e-5 to 1.5e-4 on resume, so this is not a clean test of longer training.
 
+## D. Pre-defence environment for training and evaluation
+
+Attention + Continuous trained with `--train-profile ibrahima` and evaluated with `--eval-profile ibrahima`, so training and evaluation both use the environment of `src/configs/v0_1_single_agent.py`: 400 veh/h cross traffic, 275 veh/h background traffic in the agent's lane, background vehicles that ignore SUMO safety checks (speed_mode 0), RL spawn probability 0.3 and a 5-step warmup. 4 intention settings x 252 episodes (1,008 per controller). Training used 24 workers with a rollout of 341 steps, keeping the batch at 8,184 samples against 8,192 in the original. The observation includes the three leader features added after the pre-defence report.
+
+### D1. Pre-defence environment
+
+| Controller | Collision rate | 95% CI | Collisions | Success | Travel time | Shield overrides |
+|---|---|---|---|---|---|---|
+| Attention + Continuous | 6.35% | 5.00-8.03% | 64/1008 | 92.1% | 21.5 s | - |
+
+Rear-aware settings were fixed before evaluation: follower time gap 1.5 s, shield braking capped at -1.0 m/s2 when a follower is closer than that.
+
+
 ## C. Comparison with the pre-defence study
 
 | Controller | Mean collision rate | Source |

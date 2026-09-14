@@ -1,0 +1,5 @@
+version,intention,scenario,collision_rate,success_rate,avg_travel_time,avg_waiting_time,avg_speed,n_episodes,failed_episodes,collisions,shield_steps,shield_overrides,shield_override_rate,shield_ttc_overrides,shield_rss_overrides,shield_row_overrides,shield_commit_skips,shield_rear_limits
+attention_continous__policy_attention_continous__complex,all_straight,Cx_PreDefence,1.1904761904761905,97.61904761904762,21.532738095238095,4.0228174603174605,10.910576633036476,252,0,3,0,0,0.0,0,0,0,0,0
+attention_continous__policy_attention_continous__complex,all_left,Cx_PreDefence,11.11111111111111,86.5079365079365,24.71031746031746,6.724206349206349,9.372447759857709,252,0,28,0,0,0.0,0,0,0,0,0
+attention_continous__policy_attention_continous__complex,uniform_random,Cx_PreDefence,6.349206349206349,92.46031746031746,20.78174603174603,3.5426587301587302,10.675376954994288,252,0,16,0,0,0.0,0,0,0,0,0
+attention_continous__policy_attention_continous__complex,asymmetric_random,Cx_PreDefence,6.746031746031746,91.66666666666667,19.091269841269842,2.3382936507936507,11.096760541489985,252,0,17,0,0,0.0,0,0,0,0,0
