@@ -62,7 +62,12 @@ ev --version shielded_attention_continous --policy-from attention_continous --ta
 CHOICE=$("$PY" - <<'PYEOF'
 import csv, os
 def coll(f):
-    return sum(int(r["collisions"]) for r in csv.DictReader(open(f))) if os.path.exists(f) else None
+    # Only a complete 24-configuration result counts; a partial file would
+    # compare collisions over different numbers of episodes.
+    if not os.path.exists(f):
+        return None
+    rows = list(csv.DictReader(open(f)))
+    return sum(int(r["collisions"]) for r in rows) if len(rows) == 24 else None
 c15 = coll("eval_results/attention_continous_results.csv")
 c30 = coll("eval_results/attention_continous__policy_attention_continous__3m_results.csv")
 if c30 is not None and c15 is not None and c30 < c15:

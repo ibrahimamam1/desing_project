@@ -716,7 +716,15 @@ def evaluate_version(version, model_path=None, out_name=None):
     # Save CSV
     csv_path = os.path.join(EVAL_OUTPUT_DIR, f"{out_name}_results.csv")
     with open(csv_path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(all_results[0].keys()))
+        # Union of keys across rows. Rows resumed from an older progress file
+        # can lack a column added since, and taking the header from the first
+        # row alone crashed the write and left a partial CSV.
+        fieldnames = []
+        for r in all_results:
+            for k in r:
+                if k not in fieldnames:
+                    fieldnames.append(k)
+        w = csv.DictWriter(f, fieldnames=fieldnames, restval=0)
         w.writeheader()
         w.writerows(all_results)
     print(f"  Saved: {csv_path}")
