@@ -44,7 +44,7 @@ def slide(pdf, name, title, subtitle=None):
     fig.text(0.045, 0.94, title, fontsize=25, weight="bold", color=INK, va="top")
     if subtitle:
         fig.text(0.045, 0.875, subtitle, fontsize=14, color=MUTED, va="top")
-    fig.text(0.955, 0.035, name, fontsize=9, color=MUTED, ha="right")
+    fig.text(0.985, 0.018, name, fontsize=9.5, color=MUTED, ha="right")
     return fig
 
 
@@ -91,35 +91,36 @@ with PdfPages(OUT) as pdf:
     ax.text(0.5, -0.05, "right-before-left priority, no traffic light", ha="center",
             fontsize=11, color=INK)
 
-    ax2 = fig.add_axes([0.45, 0.06, 0.53, 0.78]); ax2.axis("off")
+    ax2 = fig.add_axes([0.45, 0.075, 0.53, 0.76]); ax2.axis("off")
     ax2.set_xlim(0, 1); ax2.set_ylim(0, 1)
-    box(ax2, 0.0, 0.80, 1.0, 0.17,
+    # Vertical layout, top to bottom, with a clear 0.045 gap for every arrow.
+    box(ax2, 0.0, 0.825, 1.0, 0.155,
         "STATE  s   (37 values)\n"
-        "ego 4:  dist-to-goal, speed, sin θ, cos θ\n"
-        "leader 3:  gap, speed, TTC\n"
+        "ego 4:  dist-to-goal, speed, sin θ, cos θ        leader 3:  gap, speed, TTC\n"
         "5 neighbours × 5:  dist-to-conflict-point, speed, Δ arrival time, sin Δθ, cos Δθ\n"
-        "mask 5",
-        "#e8eef6", ec=BLUE, tc=INK, fs=11, weight="semibold")
-    arrow(ax2, 0.5, 0.79, 0.5, 0.745)
-    box(ax2, 0.04, 0.615, 0.92, 0.12,
-        "Multi-head cross-attention encoder\nego = query, neighbours = keys / values, masked → 256-d context", BLUE, fs=11.5)
-    arrow(ax2, 0.5, 0.605, 0.5, 0.565)
-    box(ax2, 0.20, 0.455, 0.60, 0.105, "PPO policy  π(a|s)\nActor 256×256   Critic 256×256", "#26456e", fs=11.5)
-    arrow(ax2, 0.5, 0.445, 0.5, 0.385)
-    ax2.text(0.5, 0.415, "proposed action  a ∈ [−1, 1]", ha="center", va="center",
-             fontsize=11, color=INK, weight="semibold", bbox=dict(fc="white", ec="none", pad=2))
-    box(ax2, 0.01, 0.115, 0.98, 0.245,
-        "SAFETY SHIELD   (checks the proposed acceleration)\n\n"
+        "mask 5  (which neighbour slots are real)",
+        "#e8eef6", ec=BLUE, tc=INK, fs=10.5, weight="semibold")
+    arrow(ax2, 0.5, 0.820, 0.5, 0.735)
+    box(ax2, 0.04, 0.625, 0.92, 0.105,
+        "Multi-head cross-attention encoder\nego = query, neighbours = keys / values → 256-d context",
+        BLUE, fs=11)
+    arrow(ax2, 0.5, 0.620, 0.5, 0.540)
+    box(ax2, 0.20, 0.430, 0.60, 0.105,
+        "PPO policy  π(a|s)\nActor 256×256    Critic 256×256", "#26456e", fs=11)
+    arrow(ax2, 0.5, 0.425, 0.5, 0.358)
+    ax2.text(0.53, 0.385, "  proposed action  a ∈ [−1, 1]  ", ha="left", va="center",
+             fontsize=10.5, color=INK, weight="semibold")
+    box(ax2, 0.01, 0.135, 0.98, 0.215,
+        "SAFETY SHIELD   checks the proposed acceleration\n\n"
         "① TTC:  brake if time-to-conflict < 2 s along the path\n"
         "② RSS:  keep v·t_react + v²/2a + gap clear, else brake\n"
-        "③ Right-of-way:  yield to a vehicle arriving from the right\n\n"
-        "commit zone — never brake past the point of no return\n"
-        "rear-aware — cap braking when a follower is close",
-        "#fdf0e6", ec=ORANGE, tc=INK, fs=11, weight="semibold")
-    arrow(ax2, 0.5, 0.105, 0.5, 0.072, color=ORANGE)
-    box(ax2, 0.04, -0.005, 0.92, 0.072,
+        "③ Right-of-way:  yield to a vehicle arriving from the right\n"
+        "+ commit zone · rear-aware braking cap",
+        "#fdf0e6", ec=ORANGE, tc=INK, fs=10.5, weight="semibold")
+    arrow(ax2, 0.5, 0.130, 0.5, 0.082, color=ORANGE, lw=2.4)
+    box(ax2, 0.04, 0.005, 0.92, 0.072,
         "ACTION in SUMO:   a ≥ 0 → a × 2.6 m/s²      a < 0 → a × 4.5 m/s²",
-        "#eaf3ea", ec=GREEN, tc=INK, fs=11.5, weight="semibold")
+        "#eaf3ea", ec=GREEN, tc=INK, fs=11, weight="semibold")
     finish(pdf, fig, "slide1_architecture")
 
     # ================================================== SLIDE 2: reward
