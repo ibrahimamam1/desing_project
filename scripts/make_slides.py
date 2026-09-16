@@ -50,9 +50,9 @@ def slide(pdf, name, title, subtitle=None):
 
 def box(ax, x, y, w, h, label, fc, ec=None, fs=10.5, tc="white", weight="bold"):
     ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.012,rounding_size=0.02",
-                                fc=fc, ec=ec or fc, lw=2.2))
+                                fc=fc, ec=ec or fc, lw=2.2, clip_on=False))
     ax.text(x + w / 2, y + h / 2, label, ha="center", va="center", fontsize=fs,
-            color=tc, weight=weight, linespacing=1.45)
+            color=tc, weight=weight, linespacing=1.45, clip_on=False)
 
 
 def arrow(ax, x1, y1, x2, y2, color=MUTED, lw=2.0, label=None, fs=9):
@@ -73,23 +73,64 @@ with PdfPages(OUT) as pdf:
     # ================================================== SLIDE 1: architecture
     fig = slide(pdf, "1 / 4", "Shielded PPO at an unsignalised junction",
                 "The learned policy proposes an acceleration; the shield inspects it and may override it before SUMO applies it")
-    ax = fig.add_axes([0.03, 0.06, 0.40, 0.76]); ax.axis("off")
+    ax = fig.add_axes([0.03, 0.155, 0.38, 0.65]); ax.axis("off")
     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
-    # junction sketch
-    ax.add_patch(Rectangle((0.38, 0.0), 0.24, 1.0, fc="#eef1f5", ec="none"))
-    ax.add_patch(Rectangle((0.0, 0.38), 1.0, 0.24, fc="#eef1f5", ec="none"))
-    ax.add_patch(Circle((0.5, 0.5), 0.30, fill=False, ec=BLUE, ls=":", lw=1.6))
-    ax.text(0.5, 0.835, "perception radius 50 m", ha="center", fontsize=11, color=BLUE, weight="semibold")
-    ax.add_patch(Rectangle((0.44, 0.10), 0.055, 0.10, fc=BLUE, ec=BLUE))
-    ax.text(0.5, 0.045, "ego (RL)", ha="center", fontsize=12, color=BLUE, weight="bold")
-    for (x, y, dx, dy) in [(0.70, 0.455, -1, 0), (0.28, 0.505, 1, 0), (0.455, 0.72, 0, -1)]:
-        ax.add_patch(Rectangle((x, y), 0.055 if dy else 0.08, 0.08 if dy else 0.055, fc=RED, ec=RED))
-        ax.annotate("", xy=(x + 0.10 * dx, y + 0.10 * dy), xytext=(x, y),
-                    arrowprops=dict(arrowstyle="-|>", lw=1.4, color=RED))
-    ax.plot([0.5], [0.5], marker="X", ms=13, color=ORANGE)
-    ax.text(0.50, 0.365, "conflict point", ha="center", fontsize=11, color=ORANGE, weight="semibold")
-    ax.text(0.5, -0.05, "right-before-left priority, no traffic light", ha="center",
-            fontsize=11, color=INK)
+    CX_, CY_ = 0.50, 0.52          # junction centre
+    DK = "#a8332a"                 # leader colour
+
+    # roads and lane markings
+    ax.add_patch(Rectangle((0.42, 0.0), 0.16, 1.0, fc="#e9edf2", ec="none"))
+    ax.add_patch(Rectangle((0.0, 0.44), 1.0, 0.16, fc="#e9edf2", ec="none"))
+    for x1, y1, x2, y2 in [(CX_, 0.0, CX_, 0.42), (CX_, 0.62, CX_, 1.0),
+                           (0.0, CY_, 0.40, CY_), (0.60, CY_, 1.0, CY_)]:
+        ax.plot([x1, x2], [y1, y2], ls=(0, (5, 5)), color="white", lw=1.6)
+    for t, x, y in [("N", CX_, 0.99), ("S", CX_, 0.005), ("E", 0.985, CY_), ("W", 0.015, CY_)]:
+        ax.text(x, y, t, ha="center", va="center", fontsize=11, weight="bold", color=MUTED)
+
+    # perception radius, drawn around the ego
+    ax.add_patch(Circle((0.49, 0.42), 0.34, fill=False, ec=BLUE, ls=":", lw=1.8, clip_on=False))
+    ax.text(0.5, 0.80, "perception radius 50 m", ha="center", fontsize=10.5,
+            color=BLUE, weight="semibold")
+
+    # ego, its leader, and the route it intends to take
+    ax.add_patch(Rectangle((0.455, 0.10), 0.05, 0.085, fc=BLUE, ec=BLUE, zorder=3))
+    ax.text(0.435, 0.142, "ego\n(RL)", ha="right", va="center", fontsize=11,
+            color=BLUE, weight="bold", linespacing=1.3)
+    ax.add_patch(Rectangle((0.455, 0.235), 0.05, 0.085, fc=DK, ec=DK, zorder=3))
+    ax.text(0.525, 0.277, "leader:  gap, speed, TTC", ha="left", va="center",
+            fontsize=9.8, color=DK, weight="semibold")
+    ax.plot([0.480, 0.480, 0.10], [0.19, CY_, CY_], ls="--", lw=2.0, color=BLUE)
+    ax.annotate("", xy=(0.07, CY_), xytext=(0.12, CY_),
+                arrowprops=dict(arrowstyle="-|>", lw=2.0, color=BLUE))
+    ax.text(0.13, 0.625, "intended route", fontsize=9.8, color=BLUE, weight="semibold")
+
+    # background vehicles; line thickness to the ego shows the attention weight
+    for (x, y), (dx, dy), lw in [((0.505, 0.665), (0, -1), 3.2),
+                                 ((0.665, 0.455), (-1, 0), 1.8),
+                                 ((0.245, 0.495), (1, 0), 0.9)]:
+        w_, h_ = (0.05, 0.085) if dy else (0.085, 0.05)
+        ax.add_patch(Rectangle((x, y), w_, h_, fc=RED, ec=RED, zorder=3))
+        cx, cy = x + w_ / 2, y + h_ / 2
+        ax.annotate("", xy=(cx + 0.095 * dx, cy + 0.095 * dy), xytext=(cx + 0.05 * dx, cy + 0.05 * dy),
+                    arrowprops=dict(arrowstyle="-|>", lw=1.5, color=RED))
+        ax.plot([0.480, cx], [0.185, cy], color=ORANGE, lw=lw, alpha=0.6, zorder=2)
+
+    # conflict point
+    ax.plot([CX_], [CY_], marker="X", ms=15, color=ORANGE, zorder=5)
+    ax.text(0.545, 0.565, "conflict point", fontsize=9.8, color=ORANGE, weight="semibold")
+
+    # what the state records for each neighbour
+    ax.annotate("per neighbour:\ndist-to-conflict-point, speed,\nΔ arrival time, sin Δθ, cos Δθ",
+                xy=(0.50, 0.755), xytext=(0.0, 0.90), ha="left", va="center", fontsize=9.6,
+                color=INK, weight="semibold", linespacing=1.35,
+                arrowprops=dict(arrowstyle="-", lw=1.0, color=MUTED))
+
+    ax.text(0.5, -0.05, "blue = RL ego     red = background traffic (IDM)",
+            ha="center", va="top", fontsize=9.6, color=INK, clip_on=False)
+    ax.text(0.5, -0.105, "orange line thickness = attention weight",
+            ha="center", va="top", fontsize=9.6, color=INK, clip_on=False)
+    ax.text(0.5, -0.16, "right-before-left priority, no traffic light",
+            ha="center", va="top", fontsize=9.6, color=MUTED, clip_on=False)
 
     ax2 = fig.add_axes([0.45, 0.075, 0.53, 0.76]); ax2.axis("off")
     ax2.set_xlim(0, 1); ax2.set_ylim(0, 1)
@@ -117,8 +158,8 @@ with PdfPages(OUT) as pdf:
         "③ Right-of-way:  yield to a vehicle arriving from the right\n"
         "+ commit zone · rear-aware braking cap",
         "#fdf0e6", ec=ORANGE, tc=INK, fs=10.5, weight="semibold")
-    arrow(ax2, 0.5, 0.130, 0.5, 0.082, color=ORANGE, lw=2.4)
-    box(ax2, 0.04, 0.005, 0.92, 0.072,
+    arrow(ax2, 0.5, 0.130, 0.5, 0.098, color=ORANGE, lw=2.4)
+    box(ax2, 0.04, 0.022, 0.92, 0.072,
         "ACTION in SUMO:   a ≥ 0 → a × 2.6 m/s²      a < 0 → a × 4.5 m/s²",
         "#eaf3ea", ec=GREEN, tc=INK, fs=11, weight="semibold")
     finish(pdf, fig, "slide1_architecture")
@@ -236,7 +277,7 @@ with PdfPages(OUT) as pdf:
     ax.text(0.5, 0.79, "Slowing down in front of traffic that never yields\nconverts a crossing conflict into a rear-end collision.",
             ha="center", fontsize=12.5, color=INK, va="top", linespacing=1.5)
 
-    ax2 = fig.add_axes([0.57, 0.30, 0.38, 0.47])
+    ax2 = fig.add_axes([0.57, 0.335, 0.38, 0.45])
     keys = list(C)
     vals = [C[k]["col"] for k in keys]
     cols = [BLUE, RED, RED, GREEN][:len(keys)]
@@ -249,7 +290,7 @@ with PdfPages(OUT) as pdf:
     ax2.tick_params(axis="x", labelsize=11)
     ax2.set_title("Pre-defence environment (1,008 episodes each)", fontsize=13.5, weight="bold", color=INK)
 
-    fig.text(0.045, 0.255,
+    fig.text(0.045, 0.245,
              "• Original shield made it significantly worse: 6.35% → 9.72% (p = 0.007). Left turns, where it brakes most, went 11.1% → 23.8%.\n"
              "• Capping the braking (rear-aware) removed some rear-end crashes but let crossing conflicts through: 9.42%, still worse (p = 0.013).\n"
              "• Adding the commit zone — never brake once the car cannot stop before the conflict point — removed the harm entirely: 6.35%,\n"
